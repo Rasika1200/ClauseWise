@@ -54,6 +54,16 @@ graph TD
 | **Human Agreement Rate** | **87.0%** |
 | **Avg. Inference Latency** | **~850ms** |
 
+### How I Evaluated
+To demonstrate empirical rigor and system reliability, we evaluated the ClauseWise pipeline against the **Contract Understanding Atticus Dataset (CUAD)** benchmark, a gold-standard dataset for legal contract understanding. 
+
+My evaluations measure:
+* **Extraction Precision & Recall** using CUAD data.
+* **RAG Hallucination Rates** comparing different LLM engines under strict fallbacks.
+* **Human-in-the-Loop Agreement** tracking analyst acceptance rates.
+
+Detailed scripts, benchmark targets, and performance logs are located in the [evaluation/](evaluation/) folder.
+
 ## ⚙️ Setup & Installation
 
 ### 1. Clone & Environment
