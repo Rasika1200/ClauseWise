@@ -40,6 +40,8 @@ numpy>=1.26.0
 # Evaluation
 rouge-score>=0.1.2
 datasets>=2.19.0
+rank_bm25>=0.2.2
+langfuse>=2.0.0
 
 # API Backend
 fastapi>=0.100.0

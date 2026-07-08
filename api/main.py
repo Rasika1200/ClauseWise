@@ -46,7 +46,7 @@ async def analyze_document(req: AnalyzeRequest):
                         tmp.write(res.content)
                         tmp_path = tmp.name
                     from modules.doc_processor import process_contract
-                    chunks = process_contract(tmp_path)
+                    chunks, doc_hash = process_contract(tmp_path, strategy="semantic")
                     os.unlink(tmp_path)
                 except Exception as e:
                     raise HTTPException(status_code=400, detail=f"Could not download PDF: {str(e)}")
@@ -92,8 +92,15 @@ async def analyze_document(req: AnalyzeRequest):
 async def qa_document(req: QARequest):
     try:
         # Retrieve context
-        retrieved = semantic_search(req.question, top_k=4)
-        context = "\n\n".join([r["text"] for r in retrieved])
+        from modules.rag_pipeline import rag_retrieve_and_assemble
+        context, retrieved = rag_retrieve_and_assemble(
+            query=req.question,
+            top_k=4,
+            rerank_results=True,
+            filter_source_file=req.source_url,
+            search_method="Hybrid (RRF Fusion)",
+            query_enhancement="None"
+        )
         
         # Answer question
         ans = answer_question(req.question, context, chat_history=[], chunks_used=retrieved)

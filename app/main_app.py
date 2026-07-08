@@ -20,6 +20,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from modules.telemetry import TelemetryLogger
+from modules import db_manager
+
+@st.cache_resource
+def get_telemetry_logger():
+    return TelemetryLogger()
+
+telemetry_logger = get_telemetry_logger()
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
@@ -297,6 +306,9 @@ _defaults = {
     "topic_results": [], "contract_analysis": None, "indexed": False,
     "chat_history": [], "hitl_decisions": {}, "audit_log": [],
     "prefill_q": "", "auto_ask": False, "dynamic_questions": [],
+    "rag_search_method": "Hybrid (RRF Fusion)",
+    "rag_query_enhancement": "None",
+    "rag_rerank_enabled": True,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -323,6 +335,41 @@ with st.sidebar:
                      use_container_width=True):
             st.session_state.page = pid
             st.rerun()
+    
+    st.divider()
+    with st.expander("🛠️ Advanced RAG Config", expanded=False):
+        st.markdown("<div style='font-size: 11px; color: #94a3b8; font-weight: 600; margin-bottom: 6px;'>RETRIEVAL STRATEGY</div>", unsafe_allow_html=True)
+        search_method = st.selectbox(
+            "Search Method",
+            ["Dense (Semantic)", "Sparse (BM25)", "Hybrid (RRF Fusion)"],
+            index=["Dense (Semantic)", "Sparse (BM25)", "Hybrid (RRF Fusion)"].index(
+                st.session_state.get("rag_search_method", "Hybrid (RRF Fusion)")
+            ),
+            key="rag_search_method_ui",
+            label_visibility="collapsed"
+        )
+        st.session_state.rag_search_method = search_method
+        
+        st.markdown("<div style='font-size: 11px; color: #94a3b8; font-weight: 600; margin-top: 10px; margin-bottom: 6px;'>QUERY ENHANCEMENT</div>", unsafe_allow_html=True)
+        query_enh = st.selectbox(
+            "Query Enhancement",
+            ["None", "Query Expansion", "HyDE"],
+            index=["None", "Query Expansion", "HyDE"].index(
+                st.session_state.get("rag_query_enhancement", "None")
+            ),
+            key="rag_query_enhancement_ui",
+            label_visibility="collapsed"
+        )
+        st.session_state.rag_query_enhancement = query_enh
+
+        st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+        rerank_enabled = st.toggle(
+            "Cross-Encoder Re-Ranker",
+            value=st.session_state.get("rag_rerank_enabled", True),
+            key="rag_rerank_enabled_ui"
+        )
+        st.session_state.rag_rerank_enabled = rerank_enabled
+
     st.divider()
     st.markdown("<div style='font-size: 11px; color: #64748b; font-weight: 500; margin-bottom: 8px;'>🟢 Offline (Ollama)</div>", unsafe_allow_html=True)
     if st.session_state.contract_name:
@@ -386,8 +433,8 @@ if page == "upload":
             try:
                 status.info("📄 Step 1/6 — Reading document...")
                 prog.progress(10)
-                chunks = process_contract(tmp_path, chunk_size=500, overlap=80)
-                # FIX: Override temp filepath with the actual filename for proper RAG filtering
+                chunks, doc_hash = process_contract(tmp_path, chunk_size=500, overlap=80, strategy="semantic")
+                # Override temp filepath with the actual filename for proper RAG filtering
                 for chunk in chunks:
                     chunk.source_file = uploaded_file.name
                 st.session_state.chunks = chunks
@@ -421,6 +468,28 @@ if page == "upload":
                 prog.progress(100)
                 status.empty()
 
+                # Call db_manager.save_contract_analysis and save_extracted_clauses to persist the finalized analysis to SQLite
+                db_manager.save_contract_analysis(
+                    contract_name=uploaded_file.name,
+                    contract_hash=doc_hash,
+                    risk_profile=analysis.overall_risk_level,
+                    summary=analysis.executive_summary,
+                    assessment=analysis.risk_assessment
+                )
+                
+                serialized_clauses = [
+                    {
+                        "clause_type": c.clause_type,
+                        "summary": c.summary,
+                        "risk_level": c.risk_level,
+                        "risk_explanation": c.risk_explanation,
+                        "confidence": c.confidence,
+                        "extracted_text": c.extracted_text
+                    }
+                    for c in analysis.clauses
+                ]
+                db_manager.save_extracted_clauses(uploaded_file.name, serialized_clauses)
+
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
                 st.stop()
@@ -448,6 +517,15 @@ elif page == "review":
         st.stop()
 
     analysis  = st.session_state.contract_analysis
+    
+    # Load existing decisions from SQLite on first load
+    if not st.session_state.hitl_decisions and st.session_state.contract_name:
+        existing = db_manager.get_all_hitl_decisions(st.session_state.contract_name)
+        st.session_state.hitl_decisions = {
+            d["clause_type"]: {"decision": d["decision"], "edited_text": d["edited_text"]}
+            for d in existing
+        }
+
     decisions = st.session_state.hitl_decisions
     clauses   = analysis.clauses
     risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(analysis.overall_risk_level.lower(), "⚪")
@@ -519,6 +597,14 @@ elif page == "review":
                     st.session_state.audit_log.append({
                         "action": f"**{clause.clause_type}** accepted",
                         "time": datetime.datetime.now().strftime("%I:%M %p")})
+                    db_manager.save_hitl_decision(
+                        contract_name=analysis.contract_name,
+                        clause_type=clause.clause_type,
+                        risk_level=clause.risk_level,
+                        decision="accepted",
+                        original_text=clause.extracted_text,
+                        edited_text=edited
+                    )
                     st.rerun()
             with a2:
                 if st.button("✏️ Edit & Save", key=f"edit_{i}", use_container_width=True):
@@ -526,6 +612,14 @@ elif page == "review":
                     st.session_state.audit_log.append({
                         "action": f"**{clause.clause_type}** edited",
                         "time": datetime.datetime.now().strftime("%I:%M %p")})
+                    db_manager.save_hitl_decision(
+                        contract_name=analysis.contract_name,
+                        clause_type=clause.clause_type,
+                        risk_level=clause.risk_level,
+                        decision="edited",
+                        original_text=clause.extracted_text,
+                        edited_text=edited
+                    )
                     st.rerun()
             with a3:
                 if st.button("❌ False Positive", key=f"rej_{i}", use_container_width=True):
@@ -533,6 +627,14 @@ elif page == "review":
                     st.session_state.audit_log.append({
                         "action": f"**{clause.clause_type}** rejected",
                         "time": datetime.datetime.now().strftime("%I:%M %p")})
+                    db_manager.save_hitl_decision(
+                        contract_name=analysis.contract_name,
+                        clause_type=clause.clause_type,
+                        risk_level=clause.risk_level,
+                        decision="rejected",
+                        original_text=clause.extracted_text,
+                        edited_text=""
+                    )
                     st.rerun()
             if clause.clause_type in decisions:
                 st.caption({"accepted": "✅ Accepted", "edited": "✏️ Edited & Accepted",
@@ -722,6 +824,9 @@ elif page == "qa":
             if msg.get("audio_out"):
                 st.audio(msg["audio_out"])
             
+            if msg.get("latency_ms") is not None:
+                st.caption(f"⏱ Response time: {msg['latency_ms']:.0f}ms")
+            
             if msg.get("chunks_used"):
                 with st.expander("🔍 Legal Citations", expanded=False):
                     for i, chunk in enumerate(msg["chunks_used"][:3]):
@@ -833,16 +938,49 @@ elif page == "qa":
 
         with st.spinner("Analyzing contract text..."):
             try:
+                import time
+                start_time = time.time()
                 context, chunks_used = rag_retrieve_and_assemble(
                     query=final_question, 
-                    top_k=3,
-                    filter_source_file=st.session_state.contract_name)
+                    top_k=6,
+                    filter_source_file=st.session_state.contract_name,
+                    search_method=st.session_state.rag_search_method,
+                    query_enhancement=st.session_state.rag_query_enhancement,
+                    rerank_results=st.session_state.rag_rerank_enabled
+                )
                 answer = answer_question(
                     question=final_question,
                     context=context,
                     chat_history=st.session_state.chat_history,
                     chunks_used=chunks_used)
                 
+                latency_ms = (time.time() - start_time) * 1000
+
+                # Formatted retrieved chunks for telemetry logging
+                formatted_chunks = [
+                    {
+                        "text": c.get("text", ""),
+                        "score": float(c.get("similarity", 0.0)),
+                        "source": c.get("metadata", {}).get("source_file", st.session_state.contract_name),
+                        "rank": idx
+                    }
+                    for idx, c in enumerate(chunks_used)
+                ]
+
+                # Log trace using telemetry logger
+                try:
+                    telemetry_logger.log_query_trace(
+                        query=final_question,
+                        response=answer.answer,
+                        retrieved_chunks=formatted_chunks,
+                        latency_ms=latency_ms,
+                        search_method=st.session_state.rag_search_method,
+                        query_enhancement=st.session_state.rag_query_enhancement,
+                        rerank_enabled=st.session_state.rag_rerank_enabled
+                    )
+                except Exception as telemetry_err:
+                    print(f"Telemetry logging error: {telemetry_err}")
+
                 audio_out = None
                 try:
                     from modules.voice_handler import text_to_speech, answer_for_voice
@@ -855,7 +993,8 @@ elif page == "qa":
                     "confidence": answer.confidence,
                     "sources": answer.sources,
                     "audio_out": audio_out,
-                    "chunks_used": chunks_used
+                    "chunks_used": chunks_used,
+                    "latency_ms": latency_ms
                 })
                 st.rerun()
             except Exception as e:
