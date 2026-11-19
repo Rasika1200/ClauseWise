@@ -14,7 +14,10 @@ def generate_query_expansion(query: str) -> List[str]:
     """Use the LLM to generate 3 alternative phrasings of the question."""
     from modules.llm_engine import call_llm, _parse_json
     prompt = f"""
-    You are an expert AI Legal Assistant. Generate 3 alternative search queries/phrasings to retrieve relevant clauses for this contract question:
+    You are an expert AI Legal Assistant. Generate 3 alternative search queries to retrieve relevant clauses for this contract question.
+    Rewrite plain-English wording into the formal legal terms a contract would actually use
+    (e.g. "mistake in the documents" -> "untrue statement or omission of a material fact; indemnification";
+    "when does it end" -> "termination; expiration date; term of agreement").
     Question: {query}
     
     Return EXACTLY a valid JSON object in this format:
@@ -122,7 +125,9 @@ def retrieve(
 
     else:  # Hybrid (RRF Fusion)
         if query_enhancement == "Query Expansion":
-            seen = set()
+            # Reciprocal Rank Fusion across the original query and its rewrites, so a chunk
+            # that ranks well for several phrasings rises to the top
+            fused, by_key = {}, {}
             for q in search_queries:
                 results = hybrid_search(
                     query=q,
@@ -130,11 +135,15 @@ def retrieve(
                     source_file=filter_source_file,
                     filter_clause_type=filter_clause_type
                 )
-                for r in results:
+                for rank, r in enumerate(results):
                     key = r.get("metadata", {}).get("chunk_id_original") or r["text"]
-                    if key not in seen:
-                        seen.add(key)
-                        candidates.append(r)
+                    by_key.setdefault(key, r)
+                    fused[key] = fused.get(key, 0.0) + 1.0 / (60.0 + rank + 1)
+            for key in sorted(fused, key=fused.get, reverse=True):
+                chunk = dict(by_key[key])
+                chunk["rrf_score"] = round(fused[key], 6)
+                chunk["fused_order"] = True
+                candidates.append(chunk)
         elif query_enhancement == "HyDE":
             import hashlib
             dense_results = semantic_search(
@@ -187,9 +196,29 @@ def retrieve(
     return candidates
 
 
+_reranker_model = None
+_reranker_failed = False
+
 def get_reranker():
-    # PyTorch CrossEncoder disabled to prevent C++ thread deadlocks on macOS
-    return None
+    """
+    Cross-encoder re-ranker (ms-marco-MiniLM-L-6-v2). Enabled wherever neural models are
+    enabled (Linux/cloud by default); off on macOS to avoid PyTorch thread deadlocks.
+    """
+    global _reranker_model, _reranker_failed
+    from modules.embedder import neural_models_enabled
+    if _reranker_failed or not neural_models_enabled():
+        return None
+    if _reranker_model is None:
+        try:
+            import torch
+            torch.set_num_threads(1)
+            from sentence_transformers import CrossEncoder
+            _reranker_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", device="cpu")
+        except Exception as e:
+            print(f"Cross-encoder unavailable ({e}); ranking by retrieval score instead.")
+            _reranker_failed = True
+            return None
+    return _reranker_model
 
 def rerank(query: str, candidates: List[Dict]) -> List[Dict]:
     """
@@ -201,13 +230,21 @@ def rerank(query: str, candidates: List[Dict]) -> List[Dict]:
         pairs = [(query, c["text"]) for c in candidates]
         try:
             scores = model.predict(pairs)
+            import math
             for c, score in zip(candidates, scores):
                 c["rerank_score"] = float(score)
-                c["similarity"] = float(score)
+                # Cross-encoder outputs logits; squash to 0-1 so confidence displays sensibly
+                c["similarity"] = 1.0 / (1.0 + math.exp(-float(score)))
             return sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
         except Exception as e:
             print(f"Error during reranking prediction: {e}")
             pass
+
+    # Fallback: candidates already fused by rank across queries keep their fused order
+    if candidates and all(c.get("fused_order") for c in candidates):
+        for c in candidates:
+            c.setdefault("rerank_score", float(c.get("rrf_score", 0.0)))
+        return candidates
 
     # Fallback to similarity
     for c in candidates:

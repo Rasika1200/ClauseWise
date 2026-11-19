@@ -344,7 +344,7 @@ _defaults = {
     "chat_history": [], "hitl_decisions": {}, "audit_log": [],
     "prefill_q": "", "auto_ask": False, "dynamic_questions": [],
     "rag_search_method": "Hybrid (RRF Fusion)",
-    "rag_query_enhancement": "None",
+    "rag_query_enhancement": "Query Expansion",
     "rag_rerank_enabled": True,
 }
 for k, v in _defaults.items():
@@ -392,7 +392,7 @@ with st.sidebar:
             "Query Enhancement",
             ["None", "Query Expansion", "HyDE"],
             index=["None", "Query Expansion", "HyDE"].index(
-                st.session_state.get("rag_query_enhancement", "None")
+                st.session_state.get("rag_query_enhancement", "Query Expansion")
             ),
             key="rag_query_enhancement_ui",
             label_visibility="collapsed"
@@ -406,6 +406,13 @@ with st.sidebar:
             key="rag_rerank_enabled_ui"
         )
         st.session_state.rag_rerank_enabled = rerank_enabled
+        try:
+            from modules.embedder import embedding_backend, neural_models_enabled
+            _emb = embedding_backend()
+            _rr = "Cross-encoder (ms-marco-MiniLM)" if (rerank_enabled and neural_models_enabled() and _emb != "TF-IDF") else "Retrieval-score order"
+            st.caption(f"Embeddings: {_emb} · Re-ranking: {_rr}")
+        except Exception:
+            pass
 
     st.divider()
     if is_cloud_available():
@@ -1097,7 +1104,7 @@ elif page == "qa":
                 start_time = time.time()
                 context, chunks_used = rag_retrieve_and_assemble(
                     query=final_question, 
-                    top_k=6,
+                    top_k=8,
                     filter_source_file=st.session_state.contract_name,
                     search_method=st.session_state.rag_search_method,
                     query_enhancement=st.session_state.rag_query_enhancement,

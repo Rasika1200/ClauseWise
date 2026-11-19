@@ -72,12 +72,56 @@ class FastTFIDFEmbedder:
 
 _tfidf_embedder = FastTFIDFEmbedder(384)
 
+def neural_models_enabled() -> bool:
+    """
+    Neural models (HuggingFace MiniLM embeddings + cross-encoder re-ranker) are ON by default
+    on Linux/cloud. They default OFF on macOS, where PyTorch thread deadlocks were seen locally.
+    Override either way with CLAUSEWISE_NEURAL=1 or CLAUSEWISE_NEURAL=0.
+    """
+    import sys
+    flag = os.getenv("CLAUSEWISE_NEURAL")
+    if flag is not None:
+        return flag.strip().lower() in ("1", "true", "yes", "on")
+    return sys.platform != "darwin"
+
+
+_neural_embedder = None
+_neural_failed = False
+
+def _get_neural_embedder():
+    """Load all-MiniLM-L6-v2 once; on any failure fall back to TF-IDF for the rest of the session."""
+    global _neural_embedder, _neural_failed
+    if _neural_failed or not neural_models_enabled():
+        return None
+    if _neural_embedder is None:
+        try:
+            import torch
+            torch.set_num_threads(1)
+            from sentence_transformers import SentenceTransformer
+            _neural_embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
+        except Exception as e:
+            print(f"Neural embedder unavailable ({e}); using TF-IDF embeddings.")
+            _neural_failed = True
+            return None
+    return _neural_embedder
+
+
+def embedding_backend() -> str:
+    return "MiniLM-L6-v2 (HuggingFace)" if _get_neural_embedder() is not None else "TF-IDF"
+
+
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """
-    Fast TF-IDF dense embedding — fast, deterministic, no PyTorch thread deadlocks.
+    Dense embeddings: HuggingFace all-MiniLM-L6-v2 (384-d) when neural models are enabled,
+    otherwise a fast deterministic TF-IDF projection (also 384-d).
     """
     if not texts:
         return []
+    model = _get_neural_embedder()
+    if model is not None:
+        cleaned = [t.strip() if t and t.strip() else "empty text" for t in texts]
+        vecs = model.encode(cleaned, batch_size=32, normalize_embeddings=True, show_progress_bar=False)
+        return vecs.tolist()
     global _tfidf_embedder
     return _tfidf_embedder.embed(texts)
 
