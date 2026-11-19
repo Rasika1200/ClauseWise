@@ -975,15 +975,39 @@ elif page == "qa":
         else:
             # Assistant Message with premium styling
             sources_html = "".join([f"<span class='source-tag'>{s}</span>" for s in msg.get("sources", [])[:3]])
-            conf_color = "#10b981" if msg.get("confidence", 0) > 0.7 else "#f59e0b" if msg.get("confidence", 0) > 0.4 else "#ef4444"
+            _conf = float(msg.get("confidence", 0) or 0)
+            # Show how strongly the answer is grounded in specific passages, as a tier rather than a raw score
+            if _conf > 0.7:
+                conf_color, conf_label = "#10b981", "STRONG"
+            elif _conf > 0.4:
+                conf_color, conf_label = "#f59e0b", "MODERATE"
+            else:
+                conf_color, conf_label = "#94a3b8", "BROAD (answer draws on several sections)"
+
+            import html as _html, re as _re
+            _lines = [l.strip() for l in msg['content'].replace('**', '').split("\n") if l.strip()]
+            # Some models put bullets on one line ("- a - b"); split those too
+            if len(_lines) == 1 and _lines[0].startswith("- ") and " - " in _lines[0]:
+                _lines = ["- " + x.strip() for x in _re.split(r"\s+-\s+", _lines[0][2:]) if x.strip()]
+            _parts, _items = [], []
+            for _l in _lines:
+                if _re.match(r"^([-*•]|\d+[.)])\s+", _l):
+                    _items.append("<li>" + _html.escape(_re.sub(r"^([-*•]|\d+[.)])\s+", "", _l)) + "</li>")
+                else:
+                    if _items:
+                        _parts.append("<ul style='margin:4px 0 8px 18px; padding:0;'>" + "".join(_items) + "</ul>"); _items = []
+                    _parts.append("<p style='margin:0 0 8px 0;'>" + _html.escape(_l) + "</p>")
+            if _items:
+                _parts.append("<ul style='margin:4px 0 8px 18px; padding:0;'>" + "".join(_items) + "</ul>")
+            answer_html = "".join(_parts)
             
             st.markdown(f"""
             <div class='bot-msg'>
                 <div class='msg-label'>AI ASSISTANT</div>
-                <div style='margin-bottom: 12px;'>{msg['content'].replace('**', '')}</div>
+                <div style='margin-bottom: 12px;'>{answer_html}</div>
                 <div style='display: flex; align-items: center; gap: 10px; opacity: 0.8;'>
-                    <div style='font-size: 11px; color: {conf_color}; font-weight: 700;'>
-                        CONFIDENCE: {msg.get('confidence', 0):.0%}
+                    <div style='font-size: 11px; color: {conf_color}; font-weight: 700;' title='How closely the top retrieved passage matches the question (cross-encoder relevance: {_conf:.0%})'>
+                        SOURCE MATCH: {conf_label}
                     </div>
                     <div style='border-left: 1px solid rgba(255,255,255,0.1); height: 12px;'></div>
                     <div>{sources_html}</div>
