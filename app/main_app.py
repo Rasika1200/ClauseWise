@@ -908,30 +908,38 @@ elif page == "qa":
 
     st.divider()
 
-    # Voice section
+    # Voice section — record in the browser, transcribe with Groq Whisper, auto-ask
     col_v, _ = st.columns([1, 2])
     with col_v:
-        st.markdown("**🎤 Voice - click mic and speak**")
-        try:
-            from streamlit_mic_recorder import mic_recorder
-            audio_in = mic_recorder(start_prompt="🎤 Start recording",
-                                    stop_prompt="⏹ Stop", key="mic_main", just_once=True)
-            if audio_in and audio_in.get("bytes"):
-                from modules.voice_handler import transcribe_audio_bytes, is_valid_question
-                with st.spinner("Transcribing..."):
-                    try:
-                        spoken, _ = transcribe_audio_bytes(audio_in["bytes"], audio_format="wav")
-                        if is_valid_question(spoken):
-                            st.session_state.prefill_q = spoken
-                            st.session_state.auto_ask  = True
-                            st.success(f'Heard: "{spoken}"')
-                            st.rerun()
-                        else:
-                            st.warning("Didn't catch that, try again.")
-                    except Exception as e:
-                        st.error(f"Voice error: {e}")
-        except ImportError:
-            st.caption("Voice not installed.")
+        st.markdown("**🎤 Ask by voice**")
+        if not hasattr(st, "audio_input"):
+            st.caption("Voice input needs Streamlit 1.39 or newer.")
+        elif not is_cloud_available():
+            st.caption("Voice input needs a GROQ_API_KEY (used for Whisper transcription).")
+        else:
+            audio_in = st.audio_input("Record your question", key="voice_q", label_visibility="collapsed")
+            if audio_in is not None:
+                import hashlib
+                audio_bytes = audio_in.getvalue()
+                audio_id = hashlib.md5(audio_bytes).hexdigest()
+                # Transcribe each recording once (Streamlit reruns keep the widget value)
+                if audio_bytes and st.session_state.get("last_voice_id") != audio_id:
+                    st.session_state.last_voice_id = audio_id
+                    from modules.voice_handler import transcribe_audio_bytes, is_valid_question
+                    with st.spinner("Transcribing..."):
+                        try:
+                            spoken, _ = transcribe_audio_bytes(audio_bytes, audio_format="wav")
+                            if is_valid_question(spoken):
+                                st.session_state.prefill_q = spoken
+                                st.session_state.auto_ask = True
+                                st.session_state.voice_heard = spoken
+                                st.rerun()
+                            else:
+                                st.warning("Didn't catch that. Try again a little closer to the mic.")
+                        except Exception as e:
+                            st.error(f"Voice error: {e}")
+            if st.session_state.get("voice_heard"):
+                st.caption(f'Heard: "{st.session_state.voice_heard}"')
 
     st.divider()
 
@@ -984,7 +992,8 @@ elif page == "qa":
             """, unsafe_allow_html=True)
             
             if msg.get("audio_out"):
-                st.audio(msg["audio_out"])
+                # Voice-asked answers play automatically once, right after they arrive
+                st.audio(msg["audio_out"], format="audio/mp3", autoplay=bool(msg.pop("autoplay", False)))
             
             if msg.get("latency_ms") is not None:
                 st.caption(f"⏱ Response time: {msg['latency_ms']:.0f}ms")
@@ -1090,6 +1099,7 @@ elif page == "qa":
 
     if should_answer:
         final_question = prompt if prompt else st.session_state.prefill_q
+        asked_by_voice = (not prompt) and final_question == st.session_state.get("voice_heard")
         st.session_state.prefill_q = ""
         st.session_state.auto_ask  = False
         
@@ -1151,11 +1161,15 @@ elif page == "qa":
                 except Exception as telemetry_err:
                     print(f"Telemetry logging error: {telemetry_err}")
 
+                # Spoken reply only for voice questions (keeps typed answers fast)
                 audio_out = None
-                try:
-                    from modules.voice_handler import text_to_speech, answer_for_voice
-                    audio_out = text_to_speech(answer_for_voice(answer))
-                except Exception: pass
+                if asked_by_voice:
+                    try:
+                        from modules.voice_handler import text_to_speech, answer_for_voice
+                        audio_out = text_to_speech(answer_for_voice(answer))
+                    except Exception:
+                        pass
+                    st.session_state.voice_heard = ""
 
                 st.session_state.chat_history.append({
                     "role": "assistant", 
@@ -1163,6 +1177,7 @@ elif page == "qa":
                     "confidence": answer.confidence,
                     "sources": answer.sources,
                     "audio_out": audio_out,
+                    "autoplay": audio_out is not None,
                     "chunks_used": chunks_used,
                     "latency_ms": latency_ms
                 })

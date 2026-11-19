@@ -1,6 +1,7 @@
 """
-Module 7: Voice Handler (FREE)
-- STT: local Whisper (openai-whisper) — runs on CPU, no API
+Module 7: Voice Handler
+- STT: Groq-hosted Whisper (whisper-large-v3-turbo) when GROQ_API_KEY is set;
+       falls back to local Whisper (openai-whisper) if installed
 - TTS: gTTS (Google Text-to-Speech, free, no key) → returns MP3 bytes
         fallback: pyttsx3 (offline)
 
@@ -36,9 +37,27 @@ def transcribe_audio_bytes(
     language: Optional[str] = None,
 ) -> Tuple[str, float]:
     """
-    Transcribe audio bytes using local Whisper. No API key needed.
-    Returns (transcribed_text, confidence).
+    Transcribe audio bytes. Uses Groq's hosted Whisper (fast, no local model download)
+    when GROQ_API_KEY is set, otherwise local Whisper. Returns (transcribed_text, confidence).
     """
+    api_key = os.getenv("GROQ_API_KEY")
+    if api_key:
+        try:
+            from groq import Groq
+            client = Groq(api_key=api_key)
+            result = client.audio.transcriptions.create(
+                model=os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
+                file=(f"question.{audio_format}", audio_bytes),
+                language=language or "en",
+                prompt="A question about a legal contract.",
+                response_format="json",
+                temperature=0.0,
+            )
+            text = (getattr(result, "text", "") or "").strip()
+            return text, (1.0 if text else 0.0)
+        except Exception as e:
+            print(f"Groq transcription failed ({e}); trying local Whisper...")
+
     model = get_whisper_model()
 
     with tempfile.NamedTemporaryFile(suffix=f".{audio_format}", delete=False) as tmp:
