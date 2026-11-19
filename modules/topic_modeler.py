@@ -1,7 +1,7 @@
 """
 Module 2: Topic Modeller (FREE stack)
 - BERTopic: local, uses sentence-transformers (no API)
-- LLM labelling: Groq free API (Llama 3.1) with local rule fallback
+- LLM labelling: Groq API (GPT-OSS 20B; Llama 3.1 was retired by Groq in Aug 2026) with local rule fallback
 - Zero-shot classification: Groq free API or local taxonomy matching
 """
 
@@ -83,7 +83,7 @@ def classify_chunk_llm(chunk_text: str, client=None) -> Dict:
 
     if client is not None:
         taxonomy_str = "\n".join(f"- {c}" for c in CLAUSE_TAXONOMY)
-        GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+        GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
         prompt = f"""You are a contract analysis expert. Classify this contract excerpt.
 
@@ -183,7 +183,7 @@ def label_topics_with_llm(topic_model, client=None) -> Dict[int, str]:
     if client is None:
         client = get_groq_client()
 
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     taxonomy_str = ", ".join(CLAUSE_TAXONOMY)
     topic_labels = {}
 

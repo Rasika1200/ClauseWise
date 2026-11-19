@@ -28,7 +28,7 @@ def call_llm(prompt, json_mode=False):
     if api_key:
         try:
             client = Groq(api_key=api_key)
-            model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+            model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
             kwargs = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -36,9 +36,20 @@ def call_llm(prompt, json_mode=False):
             }
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
-                
-            response = client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content.strip()
+
+            try:
+                response = client.chat.completions.create(**kwargs)
+            except Exception as first_err:
+                # Some models reject JSON mode; retry once without it (_parse_json handles raw text)
+                if json_mode and "rate" not in str(first_err).lower():
+                    kwargs.pop("response_format", None)
+                    response = client.chat.completions.create(**kwargs)
+                else:
+                    raise
+            content = (response.choices[0].message.content or "").strip()
+            if content:
+                return content
+            raise RuntimeError("Empty response from Groq")
         except Exception as e:
             err = str(e).lower()
             if "request limit" in err or "429" in err or "rate limit" in err or "tokens" in err:

@@ -1343,16 +1343,24 @@ elif page == "dashboard":
                 b_comp_t, b_comp_v = "✅ COMPLETENESS", f"Coverage: {completeness}%"
             else:
                 b_comp_t, b_comp_v = "❌ COMPLETENESS", "Missing key clauses"
-            b_comp_s = getattr(analysis, "completeness_assessment", "Dynamic completeness overview (Re-upload contract to generate).")
+            b_comp_s = getattr(analysis, "completeness_assessment", None) or ("Dynamic completeness overview (Re-upload contract to generate).")
             t_comp_t, t_comp_v, t_comp_s = "✅ COMPLETENESS (NLP)", f"{completeness}% Match", f"Found: {found_count} / 14 canonical vectors. Missing: {len(analysis.missing_clauses or [])} core components."
 
-            if clarity >= 80:
+            b_clar_s = getattr(analysis, "readability_assessment", None) or "Dynamic linguistic overview (Re-upload contract to generate)."
+            _rtxt = b_clar_s.lower()
+            # Headline follows the AI's written assessment when it has one, so the two never contradict
+            if any(w in _rtxt for w in ("dense", "complex", "legalese", "difficult", "technical", "hard to")):
+                b_clar_t, b_clar_v = "💎 READABILITY", "Complex"
+            elif any(w in _rtxt for w in ("moderate", "mixed", "fairly")):
+                b_clar_t, b_clar_v = "💎 READABILITY", "Moderate"
+            elif any(w in _rtxt for w in ("clear", "plain", "readable", "simple", "easy")):
+                b_clar_t, b_clar_v = "💎 READABILITY", "Highly Readable"
+            elif clarity >= 80:
                 b_clar_t, b_clar_v = "💎 READABILITY", "Highly Readable"
             elif clarity >= 60:
                 b_clar_t, b_clar_v = "💎 READABILITY", "Moderate"
             else:
                 b_clar_t, b_clar_v = "💎 READABILITY", "Complex"
-            b_clar_s = getattr(analysis, "readability_assessment", "Dynamic linguistic overview (Re-upload contract to generate).")
             t_clar_t, t_clar_v, t_clar_s = "🔍 CLARITY SCORE", f"{clarity}%", f"Avg semantic cluster span: {avg_chunk_len} chars."
 
             if risk_str == "Low":
@@ -1361,7 +1369,7 @@ elif page == "dashboard":
                 b_risk_t, b_risk_v = "⚠️ RISK LEVEL", "Moderate Risk"
             else:
                 b_risk_t, b_risk_v = "⚠️ RISK LEVEL", "High Risk"
-            b_risk_s = getattr(analysis, "risk_assessment", "Dynamic risk overview (Re-upload contract to generate).")
+            b_risk_s = getattr(analysis, "risk_assessment", None) or ("Dynamic risk overview (Re-upload contract to generate).")
             t_risk_t, t_risk_v, t_risk_s = "⚠️ RISK LEVEL", f"{risk_str} ({avg_risk:.2f})", f"Aggregate ML risk mapped across {found_count} logic vectors."
 
             if risk_score > 70:
@@ -1370,7 +1378,12 @@ elif page == "dashboard":
                 b_bal_t, b_bal_v = "⚖️ FAIRNESS", "Balanced"
             else:
                 b_bal_t, b_bal_v = "⚖️ FAIRNESS", "Slightly Skewed"
-            b_bal_s = getattr(analysis, "fairness_assessment", "Dynamic fairness overview (Re-upload contract to generate).")
+            _fair_sum = getattr(analysis, "fairness_summary", None)
+            if _fair_sum:
+                b_bal_v = _fair_sum
+            b_bal_s = (getattr(analysis, "fairness_details", None)
+                       or getattr(analysis, "fairness_assessment", None)
+                       or "Dynamic fairness overview (Re-upload contract to generate).")
             balance_tech = "Company Skew" if risk_score > 70 else ("Neutral" if risk_score <= 40 else "Warning")
             t_bal_t, t_bal_v, t_bal_s = "⚖️ BALANCE BIAS", balance_tech, "Analyzed via asymmetry in risk matrices."
 
