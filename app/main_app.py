@@ -442,6 +442,69 @@ if page == "upload":
     if not is_cloud_available():
         st.info("💡 **Local Offline Engine Active:** Running zero-dependency mode. Add `GROQ_API_KEY` to `.env` anytime for optional cloud acceleration.")
 
+    # ── Demo Mode: one click, no upload needed ────────────────────────────────
+    DEMO_PDF = "data/demo_contracts/OpenAI-AMD.pdf"
+    DEMO_JSON = "data/demo_contracts/openai_amd_prebaked.json"
+    st.markdown(
+        "<div style='text-align:center; margin: 0.5rem 0 0.75rem 0;'>"
+        "<h3 style='margin-bottom:0.25rem;'>🚀 New here? Try the demo</h3>"
+        "<p style='color:#94a3b8; margin:0;'>Loads a real AMD–OpenAI Registration Rights Agreement (Oct 2025) "
+        "with its full risk review, then lets you ask it questions.</p></div>",
+        unsafe_allow_html=True,
+    )
+    _d1, _d2, _d3 = st.columns([1, 2, 1])
+    with _d2:
+        if st.button("✨ Load Demo Contract", type="primary", use_container_width=True, key="load_demo"):
+            from modules.doc_processor import process_contract
+            from modules.clause_matcher import match_chunks
+            from modules.embedder import index_chunks
+            from modules.llm_engine import ContractAnalysis, ExtractedClause
+
+            for k, v in _defaults.items():
+                st.session_state[k] = v
+            st.session_state.chat_history = []
+            st.session_state.audit_log = []
+            st.session_state.hitl_decisions = {}
+            prog = st.progress(0)
+            status = st.empty()
+            try:
+                status.info("📄 Step 1/3 — Reading the demo contract...")
+                prog.progress(20)
+                demo_chunks, _ = process_contract(DEMO_PDF, chunk_size=500, overlap=80, strategy="semantic")
+                demo_name = os.path.basename(DEMO_PDF)
+                for chunk in demo_chunks:
+                    chunk.source_file = demo_name
+                st.session_state.chunks = demo_chunks
+                demo_texts = [c.text for c in demo_chunks]
+
+                status.info("💾 Step 2/3 — Matching clauses and building the search index...")
+                prog.progress(55)
+                demo_matches = match_chunks(demo_texts)
+                st.session_state.match_results = demo_matches
+                index_chunks(demo_chunks, topic_labels=demo_matches)
+                st.session_state.indexed = True
+
+                status.info("🤖 Step 3/3 — Loading the saved risk review...")
+                prog.progress(90)
+                with open(DEMO_JSON, "r") as f:
+                    demo_data = json.load(f)
+                st.session_state.dynamic_questions = demo_data.pop("dynamic_questions", [])
+                demo_data["clauses"] = [ExtractedClause(**c) for c in demo_data["clauses"]]
+                st.session_state.contract_analysis = ContractAnalysis(**demo_data)
+                st.session_state.contract_name = demo_name
+                prog.progress(100)
+                status.empty()
+                prog.empty()
+                st.session_state.page = "review"
+                st.rerun()
+            except Exception as e:
+                status.empty()
+                prog.empty()
+                st.error(f"Couldn't load the demo contract: {e}")
+
+    st.markdown("<p style='text-align:center; color:#64748b; margin: 1rem 0 0.25rem 0;'>— or analyze your own contract —</p>",
+                unsafe_allow_html=True)
+
     uploaded_file = st.file_uploader(
         "Drag and drop your contract here, or click Browse",
         type=["pdf", "docx"], help="Supported: PDF, Word (.docx)"

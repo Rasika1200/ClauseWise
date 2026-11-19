@@ -1,0 +1,58 @@
+{
+  "contract_name": "OpenAI-AMD.pdf",
+  "overall_risk_level": "medium",
+  "executive_summary": "Registration Rights Agreement between Advanced Micro Devices, Inc. (AMD) and OpenAI OpCo, LLC, dated October 5, 2025. It guarantees OpenAI certain registration rights for warrant shares in connection with a Product Purchase Agreement (Supply Agreement) and warrant agreements, subject to customary piggyback registration rules, indemnification obligations, and expense allocations.",
+  "completeness_assessment": "The agreement contains standard registration rights terms, including piggyback rights, indemnification, and expense coverage, but lacks demand registration rights, which is notable given the transaction's scale.",
+  "risk_assessment": "Indemnification obligations are reciprocal but present liability risks for OpenAI's representations.",
+  "risk_sources": ["Section 5: Indemnification and Contribution", "Section 3: Holder's Obligations"],
+  "readability_assessment": "Highly dense legalese, typical of high-value public equity agreements.",
+  "fairness_summary": "Favors AMD slightly",
+  "fairness_details": "While indemnification is reciprocal, the agreement lacks demand registration rights for OpenAI, allowing AMD to control the registration timing.",
+  "fairness_sources": ["Section 2: Registration Rights", "Section 5: Indemnification and Contribution"],
+  "red_flags": [
+    "No Demand Registration Rights: OpenAI cannot force AMD to file a registration statement; it can only 'piggyback' on AMD's filings.",
+    "Severable Indemnification: OpenAI is liable for any untrue statements furnished in writing for the prospectus, capped at proceeds received."
+  ],
+  "missing_clauses": [
+    "Demand Registration: Standard clause allowing the holder to mandate a registration filing."
+  ],
+  "clauses": [
+    {
+      "clause_type": "indemnification",
+      "extracted_text": "The Company agrees to indemnify and hold harmless each Holder, each person, if any, who controls any Holder... from and against any and all losses, claims, damages and liabilities... caused by any untrue statement or alleged untrue statement of a material fact contained in any registration statement or any prospectus...",
+      "summary": "AMD agrees to indemnify OpenAI and its affiliates against securities liabilities arising from registration statements, except for written information provided by OpenAI.",
+      "risk_level": "medium",
+      "risk_explanation": "Indemnification is robust but excludes liability caused by OpenAI's own written submissions.",
+      "confidence": 0.95
+    },
+    {
+      "clause_type": "liability",
+      "extracted_text": "In no event shall the liability of any Holder hereunder be greater in amount than the dollar amount of the proceeds received by such Holder upon the sale of the Registrable Securities...",
+      "summary": "OpenAI's several indemnification liability is strictly capped at the net proceeds received from selling the warrant shares.",
+      "risk_level": "low",
+      "risk_explanation": "A clear, hard liability cap based on actual proceeds protects OpenAI from unlimited claims.",
+      "confidence": 0.98
+    },
+    {
+      "clause_type": "termination",
+      "extracted_text": "“RRA Expiration Date” means October 5, 2033.",
+      "summary": "The agreement and its registration rights expire on October 5, 2033.",
+      "risk_level": "low",
+      "risk_explanation": "Provides a clear 8-year term ending in 2033, which is standard for warrant-linked registration rights.",
+      "confidence": 0.92
+    },
+    {
+      "clause_type": "payment terms",
+      "extracted_text": "The Company shall bear all fees and expenses incurred in connection with the performance by the Company of its obligations under Section 2...",
+      "summary": "AMD covers all registration expenses, including SEC fees, printing, and legal costs (except underwriter discounts and OpenAI's counsel fees).",
+      "risk_level": "low",
+      "risk_explanation": "Shifts almost all administrative and filing costs to AMD, which is highly favorable.",
+      "confidence": 0.94
+    }
+  ],
+  "dynamic_questions": [
+    "What happens if there is a mistake in the registration documents?",
+    "Who pays for the registration fees?",
+    "When do these registration rights expire?"
+  ]
+}
