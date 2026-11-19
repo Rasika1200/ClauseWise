@@ -2,6 +2,8 @@
 Module 4: Clause Matcher (OPTIMIZED — fast vectorized similarity)
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
@@ -87,7 +89,10 @@ def match_chunks(chunk_texts: List[str], threshold: float = 0.25) -> List[Dict]:
     chunk_norms = np.linalg.norm(chunk_embeddings, axis=1, keepdims=True)
     clause_norms = np.linalg.norm(clause_matrix, axis=1)
 
-    similarity_matrix = dot_product / (chunk_norms * clause_norms)
+    chunk_norms[chunk_norms == 0] = 1.0
+    clause_norms[clause_norms == 0] = 1.0
+
+    similarity_matrix = np.nan_to_num(dot_product / (chunk_norms * clause_norms), nan=0.0)
 
     # Step 3: build results
     results = []

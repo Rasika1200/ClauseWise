@@ -22,6 +22,7 @@ st.set_page_config(
 
 from modules.telemetry import TelemetryLogger
 from modules import db_manager
+from modules.llm_engine import is_cloud_available
 
 @st.cache_resource
 def get_telemetry_logger():
@@ -261,25 +262,61 @@ div.stButton > button[kind="primary"]:hover {
 }
 
 /* Clean up expanders */
-.streamlit-expanderHeader {
-    font-size: 16px !important;
-    font-weight: 500 !important;
-    color: #e5e7eb !important;
+.streamlit-expanderHeader, [data-testid="stExpander"] summary span {
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    color: #f1f5f9 !important;
     border-radius: 12px !important;
 }
 div[data-testid="stExpander"] {
-    background: rgba(255,255,255,0.02) !important;
-    border: 1px solid rgba(255,255,255,0.05) !important;
+    background: rgba(15, 23, 42, 0.5) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
     border-radius: 12px !important;
 }
 
-/* Typography Overrides */
-h1, h2, h3 {
+/* --- 8. HIGH-CONTRAST TYPOGRAPHY & WIDGET VISIBILITY --- */
+h1, h2, h3, h4, h5, h6 {
     color: #ffffff !important;
     font-weight: 600 !important;
     letter-spacing: -0.03em;
 }
-/* --- 8. SMOOTH PAGE TRANSITIONS --- */
+
+p, span, label, div[data-testid="stMarkdownContainer"] p {
+    color: #cbd5e1 !important;
+}
+
+[data-testid="stCaptionContainer"], .stCaption {
+    color: #94a3b8 !important;
+    font-size: 13px !important;
+}
+
+/* File Uploader Dark Dropzone */
+[data-testid="stFileUploaderDropzone"] {
+    background: rgba(15, 23, 42, 0.6) !important;
+    border: 2px dashed rgba(59, 130, 246, 0.4) !important;
+    border-radius: 16px !important;
+}
+[data-testid="stFileUploaderDropzone"] * {
+    color: #cbd5e1 !important;
+}
+[data-testid="stFileUploaderDropzone"] button {
+    background: rgba(30, 41, 59, 0.8) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 8px !important;
+}
+
+/* Alert / Notification Callout Styling */
+.stAlert, [data-testid="stAlert"] {
+    background: rgba(15, 23, 42, 0.8) !important;
+    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+    border-radius: 12px !important;
+}
+.stAlert p, [data-testid="stAlert"] * {
+    color: #93c5fd !important;
+}
+
+/* --- 9. SMOOTH PAGE TRANSITIONS --- */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -371,7 +408,10 @@ with st.sidebar:
         st.session_state.rag_rerank_enabled = rerank_enabled
 
     st.divider()
-    st.markdown("<div style='font-size: 11px; color: #64748b; font-weight: 500; margin-bottom: 8px;'>🟢 Offline (Ollama)</div>", unsafe_allow_html=True)
+    if is_cloud_available():
+        st.markdown("<div style='font-size: 11px; color: #60a5fa; font-weight: 600; margin-bottom: 8px;'>⚡ Groq Cloud API Active</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='font-size: 11px; color: #10b981; font-weight: 600; margin-bottom: 8px;'>🟢 Local Offline Engine Active</div>", unsafe_allow_html=True)
     if st.session_state.contract_name:
         if st.button("🗑 Clear & Start Over", use_container_width=True):
             for k, v in _defaults.items():
@@ -399,9 +439,8 @@ if page == "upload":
     """, unsafe_allow_html=True)
     st.divider()
 
-    if not os.getenv("GROQ_API_KEY"):
-        st.error("Groq API key not set. Add `GROQ_API_KEY=gsk_...` to your `.env` file and restart.")
-        st.stop()
+    if not is_cloud_available():
+        st.info("💡 **Local Offline Engine Active:** Running zero-dependency mode. Add `GROQ_API_KEY` to `.env` anytime for optional cloud acceleration.")
 
     uploaded_file = st.file_uploader(
         "Drag and drop your contract here, or click Browse",
@@ -427,12 +466,13 @@ if page == "upload":
             st.session_state.chat_history = []  # Reset chat history for the new contract
             st.session_state.audit_log = []
             st.session_state.hitl_decisions = {}
+            st.session_state.dynamic_questions = []  # Clear previous document's suggested queries
             prog = st.progress(0)
             status = st.empty()
 
             try:
-                status.info("📄 Step 1/6 — Reading document...")
-                prog.progress(10)
+                status.info("📄 Step 1/5 — Reading document...")
+                prog.progress(15)
                 chunks, doc_hash = process_contract(tmp_path, chunk_size=500, overlap=80, strategy="semantic")
                 # Override temp filepath with the actual filename for proper RAG filtering
                 for chunk in chunks:
@@ -440,8 +480,8 @@ if page == "upload":
                 st.session_state.chunks = chunks
                 chunk_texts = [c.text for c in chunks]
 
-                status.info("🛡️ Step 2/6 — Verifying document type...")
-                prog.progress(20)
+                status.info("🛡️ Step 2/5 — Verifying document type...")
+                prog.progress(35)
                 from modules.llm_engine import verify_document_type
                 verification = verify_document_type(" ".join(chunk_texts[:3]))
                 if not verification.get("is_contract", True):
@@ -450,18 +490,17 @@ if page == "upload":
                     prog.empty()
                     st.stop()
 
-
-                status.info("🔗 Step 4/6 — Matching clauses to legal taxonomy...")
+                status.info("🔗 Step 3/5 — Matching clauses to legal taxonomy...")
                 prog.progress(55)
                 match_results = match_chunks(chunk_texts)
                 st.session_state.match_results = match_results
 
-                status.info("💾 Step 5/6 — Building search index...")
+                status.info("💾 Step 4/5 — Building search index...")
                 prog.progress(75)
                 index_chunks(chunks, topic_labels=match_results)
                 st.session_state.indexed = True
 
-                status.info("🤖 Step 6/6 — Running full analysis...")
+                status.info("🤖 Step 5/5 — Running full analysis...")
                 prog.progress(90)
                 analysis = extract_clauses(" ".join(chunk_texts[:8]), contract_name=uploaded_file.name)
                 st.session_state.contract_analysis = analysis
@@ -557,7 +596,20 @@ elif page == "review":
     st.divider()
 
     st.markdown(f"### 📄 Contract Summary")
-    st.markdown(f"**TL;DR:** {getattr(analysis, 'executive_summary', 'No executive summary provided by model.')}")
+    
+    summary_text = getattr(analysis, 'executive_summary', 'No executive summary provided by model.')
+    if "Analysis completed via local extraction engine" in summary_text and hasattr(analysis, "clauses") and analysis.clauses:
+        h_cnt = sum(1 for c in analysis.clauses if c.risk_level == "high")
+        m_cnt = sum(1 for c in analysis.clauses if c.risk_level == "medium")
+        l_cnt = sum(1 for c in analysis.clauses if c.risk_level == "low")
+        r_parts = []
+        if h_cnt > 0: r_parts.append(f"{h_cnt} High-risk")
+        if m_cnt > 0: r_parts.append(f"{m_cnt} Medium-risk")
+        if l_cnt > 0: r_parts.append(f"{l_cnt} Low-risk")
+        b_str = ", ".join(r_parts) if r_parts else "0 high-risk"
+        summary_text = f"Analysis completed via local extraction engine. Identified {len(analysis.clauses)} core contractual clauses ({b_str}), resulting in a {analysis.overall_risk_level.upper()} overall risk profile."
+
+    st.markdown(f"**TL;DR:** {summary_text}")
     st.divider()
 
     # Add Red Flags and Missing Clauses to Review page for better visibility
@@ -718,20 +770,60 @@ elif page == "qa":
     if not st.session_state.dynamic_questions and st.session_state.contract_analysis:
         from modules.llm_engine import generate_dynamic_questions
         with st.spinner("Generating custom contract queries..."):
-            # Provide REAL text from the contract to get highly specific questions
-            if "chunks" in st.session_state and st.session_state.chunks:
-                source_text = "\n".join([c.text for c in st.session_state.chunks[:4]])
+            # Extract clause types present in document
+            clause_types = [c.clause_type.lower() for c in getattr(st.session_state.contract_analysis, "clauses", [])]
+            
+            # Map clause types directly to guaranteed high-precision questions
+            custom_q = []
+            for c_type in clause_types:
+                if "liab" in c_type:
+                    custom_q.append("What is the liability cap under this contract?")
+                elif "terminat" in c_type:
+                    custom_q.append("How can this agreement be terminated?")
+                elif "intellectual" in c_type or "ip" in c_type:
+                    custom_q.append("Who owns the intellectual property created?")
+                elif "confidential" in c_type or "nda" in c_type:
+                    custom_q.append("What confidentiality obligations apply under this agreement?")
+                elif "pay" in c_type or "fee" in c_type:
+                    custom_q.append("What are the payment schedule and fee terms?")
+                elif "compete" in c_type or "solicit" in c_type:
+                    custom_q.append("What non-compete restrictions apply under this agreement?")
+                elif "governing" in c_type or "jurisdiction" in c_type:
+                    custom_q.append("What governing law applies to this agreement?")
+
+            # Deduplicate while preserving order
+            seen_q = set()
+            dedup_q = []
+            for q in custom_q:
+                if q not in seen_q:
+                    seen_q.add(q)
+                    dedup_q.append(q)
+
+            if len(dedup_q) >= 3:
+                st.session_state.dynamic_questions = dedup_q[:3]
             else:
-                source_text = st.session_state.contract_analysis.executive_summary
+                if "chunks" in st.session_state and st.session_state.chunks:
+                    source_text = "\n".join([c.text for c in st.session_state.chunks[:4]])
+                else:
+                    source_text = st.session_state.contract_analysis.executive_summary
                 
-            st.session_state.dynamic_questions = generate_dynamic_questions(source_text)
-            if not st.session_state.dynamic_questions:
-                # fallback
-                st.session_state.dynamic_questions = [
-                    "What is the liability cap?",
-                    "How can this contract be terminated?",
-                    "Who owns the intellectual property?"
+                llm_q = generate_dynamic_questions(source_text)
+                for q in llm_q:
+                    if q not in seen_q:
+                        seen_q.add(q)
+                        dedup_q.append(q)
+                
+                defaults = [
+                    "What is the liability cap under this contract?",
+                    "How can this agreement be terminated?",
+                    "What key restrictions or obligations apply?"
                 ]
+                for d in defaults:
+                    if d not in seen_q:
+                        seen_q.add(d)
+                        dedup_q.append(d)
+                
+                st.session_state.dynamic_questions = dedup_q[:3]
 
     # Suggested questions — more compact design
     st.markdown("<div style='font-size: 0.85rem; font-weight: 500; color: #60a5fa;'>SUGGESTED QUERIES</div>", unsafe_allow_html=True)
@@ -953,6 +1045,14 @@ elif page == "qa":
                     context=context,
                     chat_history=st.session_state.chat_history,
                     chunks_used=chunks_used)
+                
+                # Ensure open-ended questions don't start with Yes/No
+                q_lower = final_question.strip().lower()
+                if any(q_lower.startswith(w) for w in ["how", "what", "when", "where", "why", "who", "which", "explain", "describe"]):
+                    for pfx in ["Yes. ", "No. ", "Yes,\n", "No,\n", "Yes, ", "No, "]:
+                        if answer.answer.startswith(pfx):
+                            answer.answer = answer.answer[len(pfx):]
+                            break
                 
                 latency_ms = (time.time() - start_time) * 1000
 

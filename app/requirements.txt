@@ -1,0 +1,25 @@
+# Slim dependencies for Streamlit Community Cloud (free tier, ~2.7 GB RAM).
+# Streamlit Cloud reads this file (next to main_app.py) instead of the root requirements.txt.
+# Left out: Whisper voice input, BERTopic, FastAPI and evaluation packages — the app
+# already skips voice input when they're missing ("Voice not installed").
+
+# CPU-only PyTorch (much smaller than the default CUDA build)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+streamlit>=1.35.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pymupdf>=1.23.0
+python-docx>=1.1.0
+sentence-transformers>=3.0.0
+chromadb>=0.5.0
+rank_bm25>=0.2.2
+scikit-learn>=1.4.0
+groq>=0.9.0
+langfuse>=2.0.0,<3.0.0
+gTTS>=2.5.0
+plotly>=5.22.0
+pandas>=2.2.0
+numpy>=1.26.0
+requests

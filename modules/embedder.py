@@ -4,7 +4,8 @@ TF-IDF embeddings — fast, deterministic, no threading issues.
 No Streamlit caching → avoids deadlocks.
 """
 
-import os
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -32,35 +33,54 @@ def clear_bm25_cache():
     _bm25_cache.clear()
 
 
-_embedding_model = None
+class FastTFIDFEmbedder:
+    def __init__(self, dim: int = 384):
+        self.dim = dim
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        self.vectorizer = TfidfVectorizer(max_features=dim, stop_words='english')
+        self.is_fitted = False
 
-def get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-        # Using a fast, local semantic embedding model.
-        # Cached globally to prevent PyTorch thread deadlocks on Mac.
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedding_model
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        
+        cleaned = [t.strip() if t and t.strip() else "empty text" for t in texts]
+
+        if not self.is_fitted:
+            try:
+                matrix = self.vectorizer.fit_transform(cleaned).toarray()
+                self.is_fitted = True
+            except Exception:
+                matrix = np.zeros((len(texts), self.dim))
+        else:
+            try:
+                matrix = self.vectorizer.transform(cleaned).toarray()
+            except Exception:
+                matrix = np.zeros((len(texts), self.dim))
+
+        if matrix.shape[1] < self.dim:
+            pad_width = self.dim - matrix.shape[1]
+            matrix = np.pad(matrix, ((0, 0), (0, pad_width)), mode='constant')
+        elif matrix.shape[1] > self.dim:
+            matrix = matrix[:, :self.dim]
+
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        normalized = matrix / norms
+
+        return normalized.tolist()
+
+_tfidf_embedder = FastTFIDFEmbedder(384)
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """
-    Semantic dense embedding using local huggingface model.
+    Fast TF-IDF dense embedding — fast, deterministic, no PyTorch thread deadlocks.
     """
     if not texts:
         return []
+    global _tfidf_embedder
+    return _tfidf_embedder.embed(texts)
 
-    model = get_embedding_model()
-    # Setting convert_to_tensor=False outputs numpy arrays safely
-    embeddings = model.encode(texts, convert_to_tensor=False)
-    
-    # SentenceTransformer already normalizes somewhat, but just to be safe
-    # we normalize for Cosine Similarity space in ChromaDB
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    embeddings = embeddings / norms
-
-    return embeddings.tolist()
 
 
 _chroma_client = None
@@ -99,6 +119,8 @@ def clear_collection():
     except Exception:
         pass
     clear_bm25_cache()
+    global _tfidf_embedder
+    _tfidf_embedder = FastTFIDFEmbedder(384)
 
 def index_chunks(chunks, topic_labels: Optional[List[Dict]] = None, clear_first: bool = True) -> int:
     """Embed and store contract chunks."""
@@ -117,18 +139,18 @@ def index_chunks(chunks, topic_labels: Optional[List[Dict]] = None, clear_first:
 
     for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
         meta = {
-            "source_file": chunk.source_file,
-            "page_num": chunk.page_num,
-            "chunk_id_original": chunk.chunk_id,
+            "source_file": chunk.source_file or "",
+            "page_num": int(chunk.page_num) if chunk.page_num is not None else 1,
+            "chunk_id_original": chunk.chunk_id or "",
         }
 
         if topic_labels and i < len(topic_labels):
             label = topic_labels[i]
             meta.update({
-                "clause_type": label.get("clause_type", "other"),
-                "risk_level": label.get("risk_level", "low"),
-                "confidence": str(label.get("confidence", 0.0)),
-                "summary": label.get("summary", ""),
+                "clause_type": label.get("clause_type") or "other",
+                "risk_level": label.get("risk_level") or "low",
+                "confidence": str(label.get("confidence") if label.get("confidence") is not None else 0.0),
+                "summary": label.get("summary") or "",
             })
 
         ids.append(_make_id(chunk.chunk_id))

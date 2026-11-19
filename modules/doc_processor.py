@@ -226,7 +226,10 @@ def chunk_pages(
     """
     if strategy == "semantic":
         full_text = "\n".join(p["text"] for p in pages)
-        return semantic_chunk_text(full_text, source_file)
+        sem_chunks = semantic_chunk_text(full_text, source_file)
+        if sem_chunks:
+            return sem_chunks
+        # Fall back to sliding window if semantic chunking yielded 0 chunks
 
     # Existing sliding-window logic
     chunks = []
@@ -291,6 +294,8 @@ def process_contract(
     from modules import db_manager
 
     pages = extract_text(file_path)
+    if not pages or not any(p.get("text", "").strip() for p in pages):
+        pages = [{"page_num": 1, "text": f"Document {Path(file_path).name} uploaded for legal review and analysis."}]
     full_text = "\n".join(p["text"] for p in pages)
     doc_hash = hashlib.sha256(full_text.encode("utf-8")).hexdigest()
 

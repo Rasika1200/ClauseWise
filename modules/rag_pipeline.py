@@ -187,20 +187,9 @@ def retrieve(
     return candidates
 
 
-_reranker_model = None
-
 def get_reranker():
-    global _reranker_model
-    if _reranker_model is None:
-        try:
-            import torch
-            torch.set_num_threads(1)
-            from sentence_transformers import CrossEncoder
-            _reranker_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        except Exception as e:
-            print(f"Error loading CrossEncoder: {e}")
-            _reranker_model = None
-    return _reranker_model
+    # PyTorch CrossEncoder disabled to prevent C++ thread deadlocks on macOS
+    return None
 
 def rerank(query: str, candidates: List[Dict]) -> List[Dict]:
     """
@@ -221,6 +210,9 @@ def rerank(query: str, candidates: List[Dict]) -> List[Dict]:
             pass
 
     # Fallback to similarity
+    for c in candidates:
+        if "rerank_score" not in c:
+            c["rerank_score"] = float(c.get("similarity", 0.0))
     return sorted(candidates, key=lambda x: x.get("similarity", 0), reverse=True)
 
 

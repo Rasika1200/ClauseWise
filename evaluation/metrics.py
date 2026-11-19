@@ -9,7 +9,8 @@ Computes all metrics your professor will ask about:
 Run: python evaluation/run_eval.py
 """
 
-import os
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import sqlite3
 import pandas as pd
@@ -138,8 +139,11 @@ def check_hallucination_rate(
 
     Returns hallucination rate (fraction of answers NOT grounded in context).
     """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"error": "OPENAI_API_KEY environment variable not set"}
     from openai import OpenAI
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=api_key)
 
     hallucinated = 0
     results = []
@@ -188,7 +192,8 @@ def compute_human_agreement_rate(db_path: Optional[str] = None) -> Dict:
     Reads from the HITL SQLite feedback database.
     """
     if db_path is None:
-        db_path = os.getenv("SQLITE_DB_PATH", "./data/feedback.db")
+        from modules.db_manager import DB_PATH
+        db_path = os.getenv("SQLITE_DB_PATH", DB_PATH)
 
     if not os.path.exists(db_path):
         return {"error": f"No feedback database found at {db_path}"}

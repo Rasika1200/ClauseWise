@@ -47,6 +47,8 @@ async def analyze_document(req: AnalyzeRequest):
                         tmp_path = tmp.name
                     from modules.doc_processor import process_contract
                     chunks, doc_hash = process_contract(tmp_path, strategy="semantic")
+                    for c in chunks:
+                        c.source_file = req.source_url
                     os.unlink(tmp_path)
                 except Exception as e:
                     raise HTTPException(status_code=400, detail=f"Could not download PDF: {str(e)}")

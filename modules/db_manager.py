@@ -9,7 +9,8 @@ import json
 import sqlite3
 from typing import List, Dict, Any, Optional
 
-DB_PATH = "data/feedback.db"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(BASE_DIR, "data", "feedback.db")
 
 # Auto-create data directory on import
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
