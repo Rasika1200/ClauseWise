@@ -346,10 +346,59 @@ _defaults = {
     "rag_search_method": "Hybrid (RRF Fusion)",
     "rag_query_enhancement": "Query Expansion",
     "rag_rerank_enabled": True,
+    "doc_type": "", "doc_type_conf": 0.0, "doc_type_for": "",
+    "key_terms": None, "key_terms_for": "",
+    "compare_result": None,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+# ── Key-term rendering helpers (document-type packs) ─────────────────────────
+_ASSESS_STYLE = {
+    "favorable":   ("#10b981", "Favorable"),
+    "standard":    ("#94a3b8", "Standard"),
+    "unfavorable": ("#ef4444", "Unfavorable"),
+    "not_found":   ("#64748b", "Not found"),
+}
+
+def _badge(assessment: str) -> str:
+    color, text = _ASSESS_STYLE.get(assessment, _ASSESS_STYLE["standard"])
+    return (f"<span style='display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; "
+            f"font-weight:700; color:{color}; border:1px solid {color}55; background:{color}1a;'>{text}</span>")
+
+def _cell(row: dict) -> str:
+    import html as _h
+    val = _h.escape(row.get("value", ""))
+    note = _h.escape(row.get("note", ""))
+    quote = _h.escape(row.get("quote", ""))
+    out = f"<div style='font-weight:600; color:#e5e7eb;'>{val}</div><div style='margin:4px 0;'>{_badge(row.get('assessment', 'standard'))}</div>"
+    if note:
+        out += f"<div style='font-size:12px; color:#9ca3af;'>{note}</div>"
+    if quote:
+        out += f"<div style='font-size:11px; color:#64748b; font-style:italic; margin-top:4px;'>“{quote}”</div>"
+    return out
+
+_TABLE_CSS = ("width:100%; border-collapse:collapse; font-size:14px;")
+_TH = "text-align:left; padding:10px; color:#60a5fa; font-size:11px; letter-spacing:1px; border-bottom:1px solid rgba(255,255,255,0.1);"
+_TD = "vertical-align:top; padding:10px; border-bottom:1px solid rgba(255,255,255,0.06);"
+
+def render_key_terms(rows: list):
+    import html as _h
+    body = "".join(
+        f"<tr><td style='{_TD} width:28%; color:#cbd5e1; font-weight:600;'>{_h.escape(r['label'])}</td><td style='{_TD}'>{_cell(r)}</td></tr>"
+        for r in rows)
+    st.markdown(f"<table style='{_TABLE_CSS}'><tr><th style='{_TH}'>TERM</th><th style='{_TH}'>WHAT THE DOCUMENT SAYS</th></tr>{body}</table>",
+                unsafe_allow_html=True)
+
+def render_comparison(name_a: str, rows_a: list, name_b: str, rows_b: list):
+    import html as _h
+    body = "".join(
+        f"<tr><td style='{_TD} width:22%; color:#cbd5e1; font-weight:600;'>{_h.escape(ra['label'])}</td>"
+        f"<td style='{_TD} width:39%;'>{_cell(ra)}</td><td style='{_TD} width:39%;'>{_cell(rb)}</td></tr>"
+        for ra, rb in zip(rows_a, rows_b))
+    st.markdown(f"<table style='{_TABLE_CSS}'><tr><th style='{_TH}'>TERM</th><th style='{_TH}'>A · {_h.escape(name_a)}</th>"
+                f"<th style='{_TH}'>B · {_h.escape(name_b)}</th></tr>{body}</table>", unsafe_allow_html=True)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -366,6 +415,7 @@ with st.sidebar:
         ("review",    "🔍  Review Contract"),
         ("qa",        "💬  Q&A"),
         ("dashboard", "📊  Dashboard"),
+        ("compare",   "⚖️  Compare Documents"),
     ]:
         if st.button(label, key=f"nav_{pid}",
                      type="primary" if st.session_state.page == pid else "secondary",
@@ -681,6 +731,48 @@ elif page == "review":
 
     st.markdown(f"**TL;DR:** {summary_text}")
     st.divider()
+
+    # ── Key terms for this document type ──────────────────────────────────────
+    from modules.doc_types import DOC_TYPES, detect_document_type, extract_key_terms, favorability_score
+    _cname = st.session_state.contract_name
+    _texts = [c.text for c in st.session_state.chunks]
+    _use_llm = is_cloud_available()
+    if _texts and st.session_state.doc_type_for != _cname:
+        with st.spinner("Identifying document type..."):
+            _det = detect_document_type(" ".join(_texts[:12]), use_llm=_use_llm)
+        st.session_state.doc_type = _det["type"]
+        st.session_state.doc_type_conf = _det["confidence"]
+        st.session_state.doc_type_for = _cname
+
+    if _texts and st.session_state.doc_type:
+        _keys = list(DOC_TYPES.keys())
+        kt1, kt2 = st.columns([0.6, 0.4])
+        with kt1:
+            st.markdown("### 📑 Key Terms")
+            st.caption("The checklist changes with the document type. Each value is pulled from the passages that cover that term.")
+        with kt2:
+            _chosen = st.selectbox(
+                f"Document type (detected, {st.session_state.doc_type_conf:.0%} confidence)",
+                _keys, index=_keys.index(st.session_state.doc_type),
+                format_func=lambda k: DOC_TYPES[k]["label"], key=f"doc_type_select_{_cname}")
+            if _chosen != st.session_state.doc_type:
+                st.session_state.doc_type = _chosen
+                st.rerun()
+
+        _cache_key = f"{_cname}|{st.session_state.doc_type}"
+        if st.session_state.key_terms_for != _cache_key:
+            with st.spinner(f"Extracting key terms for a {DOC_TYPES[st.session_state.doc_type]['label']}..."):
+                st.session_state.key_terms = extract_key_terms(_texts, st.session_state.doc_type, use_llm=_use_llm)
+            st.session_state.key_terms_for = _cache_key
+
+        _rows = st.session_state.key_terms or []
+        _score = favorability_score(_rows)
+        if _score is not None:
+            st.markdown(f"**Favorability for {DOC_TYPES[st.session_state.doc_type]['perspective']}:** {_score}/100 "
+                        f"· {sum(r['assessment']=='unfavorable' for r in _rows)} unfavorable · "
+                        f"{sum(r['assessment']=='not_found' for r in _rows)} not found")
+        render_key_terms(_rows)
+        st.divider()
 
     # Add Red Flags and Missing Clauses to Review page for better visibility
     if analysis.red_flags:
@@ -1544,3 +1636,131 @@ elif page == "dashboard":
                     st.caption(f"This contract lacks a detected **{m}** clause. Consider routing to Legal for insertion.")
 
     st.markdown("<div style='margin-bottom: 100px;'></div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPARE DOCUMENTS — two agreements of the same type, term by term
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "compare":
+    from modules.doc_types import (DOC_TYPES, detect_document_type, extract_key_terms,
+                                   favorability_score, compare_documents)
+    from modules.doc_processor import process_contract
+    import tempfile, glob
+
+    st.title("⚖️ Compare Documents")
+    st.caption("Put two agreements of the same kind side by side: two credit card agreements, two leases, two job offers, "
+               "two vendor contracts. ClauseWise detects the type, pulls the terms that matter for it, and says which one is better and why.")
+
+    SAMPLE_DIR = "data/demo_contracts/compare"
+    samples = sorted(glob.glob(os.path.join(SAMPLE_DIR, "*.pdf")) + glob.glob(os.path.join(SAMPLE_DIR, "*.docx")))
+
+    def _doc_label(path_or_name: str) -> str:
+        return os.path.splitext(os.path.basename(path_or_name))[0].replace("_", " ").replace("-", " ")
+
+    src_a = src_b = None
+    if len(samples) >= 2:
+        use_samples = st.toggle("Use sample documents", value=True, key="cmp_use_samples",
+                                help="Real public agreements bundled with the demo.")
+    else:
+        use_samples = False
+
+    ca, cb = st.columns(2)
+    if use_samples:
+        with ca:
+            src_a = st.selectbox("Document A", samples, index=0, format_func=_doc_label, key="cmp_sample_a")
+        with cb:
+            src_b = st.selectbox("Document B", samples, index=1, format_func=_doc_label, key="cmp_sample_b")
+    else:
+        with ca:
+            up_a = st.file_uploader("Document A", type=["pdf", "docx"], key="cmp_up_a")
+        with cb:
+            up_b = st.file_uploader("Document B", type=["pdf", "docx"], key="cmp_up_b")
+        src_a, src_b = up_a, up_b
+
+    type_keys = ["auto"] + list(DOC_TYPES.keys())
+    forced = st.selectbox("Document type", type_keys,
+                          format_func=lambda k: "Auto-detect" if k == "auto" else DOC_TYPES[k]["label"], key="cmp_type")
+
+    def _chunk_texts(src) -> tuple:
+        """Return (display_name, chunk_texts) for a sample path or an uploaded file."""
+        if isinstance(src, str):
+            chunks, _ = process_contract(src, chunk_size=500, overlap=80, strategy="semantic")
+            return _doc_label(src), [c.text for c in chunks]
+        suffix = ".pdf" if src.name.lower().endswith(".pdf") else ".docx"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(src.getvalue())
+            tmp_path = tmp.name
+        try:
+            chunks, _ = process_contract(tmp_path, chunk_size=500, overlap=80, strategy="semantic")
+        finally:
+            os.unlink(tmp_path)
+        return _doc_label(src.name), [c.text for c in chunks]
+
+    can_run = src_a is not None and src_b is not None
+    if st.button("⚖️ Compare", type="primary", disabled=not can_run, use_container_width=True):
+        use_llm = is_cloud_available()
+        prog, status = st.progress(0), st.empty()
+        try:
+            status.info("📄 Reading both documents...")
+            name_a, texts_a = _chunk_texts(src_a)
+            prog.progress(20)
+            name_b, texts_b = _chunk_texts(src_b)
+            if name_a == name_b:
+                name_a, name_b = name_a + " (A)", name_b + " (B)"
+            prog.progress(35)
+
+            status.info("🧭 Identifying document type...")
+            det_a = detect_document_type(" ".join(texts_a[:12]), use_llm=use_llm)
+            det_b = detect_document_type(" ".join(texts_b[:12]), use_llm=use_llm)
+            dtype = det_a["type"] if forced == "auto" else forced
+            prog.progress(50)
+
+            status.info(f"📑 Extracting key terms ({DOC_TYPES[dtype]['label']})...")
+            rows_a = extract_key_terms(texts_a, dtype, use_llm=use_llm)
+            prog.progress(70)
+            rows_b = extract_key_terms(texts_b, dtype, use_llm=use_llm)
+            prog.progress(88)
+
+            status.info("⚖️ Comparing...")
+            verdict = compare_documents(name_a, rows_a, name_b, rows_b, dtype, use_llm=use_llm)
+            prog.progress(100)
+            st.session_state.compare_result = {
+                "type": dtype, "type_mismatch": forced == "auto" and det_a["type"] != det_b["type"],
+                "det_b": det_b["type"], "name_a": name_a, "name_b": name_b,
+                "rows_a": rows_a, "rows_b": rows_b, "verdict": verdict,
+            }
+        except Exception as e:
+            st.error(f"Comparison failed: {e}")
+        finally:
+            status.empty()
+            prog.empty()
+
+    res = st.session_state.compare_result
+    if res:
+        pack = DOC_TYPES[res["type"]]
+        st.divider()
+        if res["type_mismatch"]:
+            st.warning(f"These look like different document types (A: {pack['label']}, "
+                       f"B: {DOC_TYPES[res['det_b']]['label']}). Comparing both as a {pack['label']}.")
+        v = res["verdict"]
+        winner = {"A": res["name_a"], "B": res["name_b"]}.get(v["better"])
+        headline = f"🏆 {winner} is better for {pack['perspective']}" if winner else f"🤝 Roughly even for {pack['perspective']}"
+        st.markdown(f"### {headline}")
+        st.markdown(v["summary"])
+        if v.get("differences"):
+            st.markdown("\n".join(f"- {d}" for d in v["differences"]))
+
+        sa, sb = favorability_score(res["rows_a"]), favorability_score(res["rows_b"])
+        m1, m2, m3 = st.columns(3)
+        m1.metric(f"A · favorability", f"{sa}/100" if sa is not None else "n/a")
+        m2.metric(f"B · favorability", f"{sb}/100" if sb is not None else "n/a")
+        m3.metric("Document type", pack["label"])
+        st.caption("Favorability = share of the checklist terms that are favorable (1), standard (0.5) or unfavorable (0) "
+                   f"for {pack['perspective']}; terms not found are left out.")
+
+        render_comparison(res["name_a"], res["rows_a"], res["name_b"], res["rows_b"])
+
+        import pandas as pd
+        csv = pd.DataFrame([{"term": ra["label"], "A_value": ra["value"], "A_assessment": ra["assessment"],
+                             "B_value": rb["value"], "B_assessment": rb["assessment"]}
+                            for ra, rb in zip(res["rows_a"], res["rows_b"])]).to_csv(index=False)
+        st.download_button("📥 Download comparison (CSV)", csv, file_name="clausewise_comparison.csv", mime="text/csv")
