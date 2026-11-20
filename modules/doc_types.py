@@ -196,10 +196,16 @@ def _best_sentence(text: str, query: str) -> str:
 
 
 # ── Extraction ────────────────────────────────────────────────────────────────
-def extract_key_terms(chunk_texts: List[str], doc_type: str, use_llm: bool = True) -> List[Dict]:
+def _clean_quote(text: str) -> str:
+    return re.sub(r"^[\s•\-–*\"“”]+", "", text or "").strip()
+
+
+def extract_key_terms(chunk_texts: List[str], doc_type: str, use_llm: bool = True,
+                      batch_size: int = 4) -> List[Dict]:
     """
     Returns one row per checklist term:
-    {key, label, value, assessment, note, quote}
+    {key, label, value, assessment, note, quote, method}  (method: "ai" or "keyword")
+    Terms are extracted in small batches so each request stays well under free-tier token limits.
     """
     pack = DOC_TYPES.get(doc_type, DOC_TYPES["commercial"])
     terms = pack["terms"]
@@ -209,20 +215,24 @@ def extract_key_terms(chunk_texts: List[str], doc_type: str, use_llm: bool = Tru
     rows = []
     for t in terms:
         idx = hits.get(t["key"], [])
-        quote = _best_sentence(chunk_texts[idx[0]], t["query"]) if idx else ""
+        quote = _clean_quote(_best_sentence(chunk_texts[idx[0]], t["query"])) if idx else ""
         rows.append({"key": t["key"], "label": t["label"],
                      "value": quote or "Not found in document",
                      "assessment": "standard" if quote else "not_found",
                      "note": "Keyword match only (AI extraction unavailable)." if quote else "",
-                     "quote": quote})
+                     "quote": quote, "method": "keyword"})
     if not use_llm:
         return rows
 
-    blocks = []
-    for t in terms:
-        excerpt = "\n...\n".join(chunk_texts[i][:700] for i in hits.get(t["key"], [])) or "(no matching text)"
-        blocks.append(f"### {t['key']} — {t['label']}\n{excerpt}")
-    prompt = f"""You are reviewing a {pack['label']} from the perspective of {pack['perspective']}.
+    from modules.llm_engine import call_llm, _parse_json
+    by_key: Dict[str, Dict] = {}
+    for start in range(0, len(terms), batch_size):
+        batch = terms[start:start + batch_size]
+        blocks = []
+        for t in batch:
+            excerpt = "\n...\n".join(chunk_texts[i][:550] for i in hits.get(t["key"], [])) or "(no matching text)"
+            blocks.append(f"### {t['key']} — {t['label']}\n{excerpt}")
+        prompt = f"""You are reviewing a {pack['label']} from the perspective of {pack['perspective']}.
 For each term below, read ONLY its excerpts and extract what the document says.
 
 {chr(10).join(blocks)}
@@ -236,32 +246,40 @@ Never invent numbers that are not in the excerpts.
 
 Respond ONLY with JSON:
 {{"terms": [{{"key": "...", "value": "...", "assessment": "...", "note": "...", "quote": "..."}}]}}"""
-    try:
-        from modules.llm_engine import call_llm, _parse_json
-        data = _parse_json(call_llm(prompt, json_mode=True))
-        by_key = {str(r.get("key", "")).strip(): r for r in data.get("terms", []) if isinstance(r, dict)}
-        merged = []
-        for row in rows:
-            r = by_key.get(row["key"])
-            if r:
-                a = str(r.get("assessment", "")).strip().lower().replace(" ", "_")
-                merged.append({**row,
-                               "value": str(r.get("value") or row["value"])[:200],
-                               "assessment": a if a in ASSESSMENTS else "standard",
-                               "note": str(r.get("note") or "")[:300],
-                               "quote": str(r.get("quote") or "")[:300]})
-            else:
-                merged.append(row)
-        return merged
-    except Exception as e:
-        print(f"Key-term extraction via LLM failed ({e}); using keyword evidence.")
-        return rows
+        try:
+            data = _parse_json(call_llm(prompt, json_mode=True))
+            for r in data.get("terms", []):
+                if isinstance(r, dict) and str(r.get("key", "")).strip():
+                    by_key[str(r["key"]).strip()] = r
+        except Exception as e:
+            print(f"Key-term extraction batch failed ({e}); keeping keyword evidence for {[t['key'] for t in batch]}.")
+
+    merged = []
+    for row in rows:
+        r = by_key.get(row["key"])
+        if r:
+            a = str(r.get("assessment", "")).strip().lower().replace(" ", "_")
+            merged.append({**row,
+                           "value": str(r.get("value") or row["value"])[:200],
+                           "assessment": a if a in ASSESSMENTS else "standard",
+                           "note": str(r.get("note") or "")[:300],
+                           "quote": _clean_quote(str(r.get("quote") or ""))[:300],
+                           "method": "ai"})
+        else:
+            merged.append(row)
+    return merged
+
+
+def ai_coverage(rows: List[Dict]) -> float:
+    """Share of rows extracted by the AI (the rest are keyword fallbacks)."""
+    return sum(r.get("method") == "ai" for r in rows) / len(rows) if rows else 0.0
 
 
 def favorability_score(rows: List[Dict]) -> Optional[int]:
     """0-100: share of found terms that are favorable (+1) / standard (0.5) / unfavorable (0)."""
     weights = {"favorable": 1.0, "standard": 0.5, "unfavorable": 0.0}
-    found = [weights[r["assessment"]] for r in rows if r.get("assessment") in weights]
+    found = [weights[r["assessment"]] for r in rows
+             if r.get("assessment") in weights and r.get("method", "ai") != "keyword"]
     if not found:
         return None
     return round(100 * sum(found) / len(found))
@@ -270,8 +288,18 @@ def favorability_score(rows: List[Dict]) -> Optional[int]:
 # ── Comparison ────────────────────────────────────────────────────────────────
 def compare_documents(name_a: str, rows_a: List[Dict], name_b: str, rows_b: List[Dict],
                       doc_type: str, use_llm: bool = True) -> Dict:
-    """Return {better: 'A'|'B'|'similar', summary, differences: [str]}."""
+    """Return {better: 'A'|'B'|'similar'|'incomplete', summary, differences: [str], compared_terms}."""
     pack = DOC_TYPES.get(doc_type, DOC_TYPES["commercial"])
+    # Only compare terms the AI extracted for BOTH documents; keyword fallbacks are evidence, not verdicts
+    pairs = [(ra, rb) for ra, rb in zip(rows_a, rows_b)
+             if ra.get("method", "ai") == "ai" and rb.get("method", "ai") == "ai"]
+    if len(pairs) < max(2, len(rows_a) // 2):
+        return {"better": "incomplete",
+                "summary": "AI extraction didn't finish for enough terms in both documents to judge fairly. "
+                           "The table shows what was found; run the comparison again in a minute.",
+                "differences": [], "method": "incomplete", "compared_terms": len(pairs)}
+    rows_a = [p[0] for p in pairs]
+    rows_b = [p[1] for p in pairs]
     sa, sb = favorability_score(rows_a), favorability_score(rows_b)
     if sa is None or sb is None or abs(sa - sb) < 8:
         better = "similar"
@@ -283,7 +311,7 @@ def compare_documents(name_a: str, rows_a: List[Dict], name_b: str, rows_b: List
                     if better != "similar" else "The two documents score about the same."),
         "differences": [f"{ra['label']}: {ra['value']} vs {rb['value']}"
                         for ra, rb in zip(rows_a, rows_b) if ra["assessment"] != rb["assessment"]][:5],
-        "method": "score",
+        "method": "score", "compared_terms": len(pairs),
     }
     if not use_llm:
         return fallback
@@ -303,7 +331,7 @@ Which is better for {pack['perspective']}? Respond ONLY with JSON:
         return {"better": b if b in ("A", "B") else "similar",
                 "summary": str(data.get("summary") or fallback["summary"]),
                 "differences": [str(d) for d in (data.get("differences") or fallback["differences"])][:5],
-                "method": "llm"}
+                "method": "llm", "compared_terms": len(pairs)}
     except Exception as e:
         print(f"Comparison via LLM failed ({e}); using score-based verdict.")
         return fallback

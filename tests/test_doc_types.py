@@ -36,3 +36,23 @@ def test_score_and_compare_without_llm():
     assert favorability_score(a) == 75 and favorability_score(b) == 0
     verdict = compare_documents("Card A", a, "Card B", b, "credit_card", use_llm=False)
     assert verdict["better"] == "A" and verdict["differences"]
+
+def test_extraction_is_batched_and_partial_failures_fall_back(mocker):
+    calls = {"n": 0}
+    def fake(prompt, json_mode=False):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("rate limit")
+        keys = [line[4:].split(" — ")[0] for line in prompt.splitlines() if line.startswith("### ")]
+        return '{"terms": [' + ",".join(f'{{"key": "{k}", "value": "v", "assessment": "standard", "note": "", "quote": ""}}' for k in keys) + ']}'
+    mocker.patch("modules.llm_engine.call_llm", side_effect=fake)
+    rows = extract_key_terms(CARD, "credit_card", batch_size=4)
+    assert calls["n"] == 3                       # 11 terms -> 3 batches
+    methods = [r["method"] for r in rows]
+    assert methods[:4] == ["ai"] * 4 and methods[4:8] == ["keyword"] * 4 and methods[8:] == ["ai"] * 3
+
+def test_verdict_ignores_keyword_rows_and_flags_incomplete():
+    a = [{"label": f"T{i}", "value": "x", "assessment": "favorable", "method": "keyword"} for i in range(6)]
+    b = [{"label": f"T{i}", "value": "y", "assessment": "unfavorable", "method": "ai"} for i in range(6)]
+    v = compare_documents("A", a, "B", b, "credit_card", use_llm=False)
+    assert v["better"] == "incomplete" and favorability_score(a) is None

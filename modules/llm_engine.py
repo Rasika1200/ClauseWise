@@ -19,10 +19,27 @@ def is_cloud_available() -> bool:
     """Check if Groq API key is present."""
     return bool(os.getenv("GROQ_API_KEY"))
 
+LAST_LLM_ERROR = ""  # most recent Groq error, surfaced in the UI when a feature falls back
+
+
+def _is_rate_limit(err: Exception) -> bool:
+    e = str(err).lower()
+    return "429" in e or "rate limit" in e or "rate_limit" in e or "tokens per minute" in e
+
+
+def _retry_after_seconds(err: Exception, default: float = 6.0) -> float:
+    m = re.search(r"try again in\s*(?:(\d+)m)?\s*([\d.]+)\s*s", str(err), re.IGNORECASE)
+    if m:
+        return float(m.group(1) or 0) * 60 + float(m.group(2))
+    return default
+
+
 def call_llm(prompt, json_mode=False):
     from groq import Groq
     import requests
-    
+    import time
+    global LAST_LLM_ERROR
+
     # 1. Try Groq (Cloud API)
     api_key = os.getenv("GROQ_API_KEY")
     if api_key:
@@ -34,23 +51,39 @@ def call_llm(prompt, json_mode=False):
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.0,
             }
+            if model.startswith("openai/gpt-oss"):
+                # Short reasoning keeps token use (and rate-limit pressure) down
+                kwargs["reasoning_effort"] = "low"
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
 
-            try:
-                response = client.chat.completions.create(**kwargs)
-            except Exception as first_err:
-                # Some models reject JSON mode; retry once without it (_parse_json handles raw text)
-                if json_mode and "rate" not in str(first_err).lower():
-                    kwargs.pop("response_format", None)
+            response, last_err = None, None
+            for attempt in range(4):
+                try:
                     response = client.chat.completions.create(**kwargs)
-                else:
-                    raise
+                    break
+                except Exception as err:
+                    last_err = err
+                    msg = str(err).lower()
+                    if _is_rate_limit(err) and attempt < 3:
+                        # Free-tier tokens-per-minute limit: wait as long as Groq asks (capped), then retry
+                        time.sleep(min(_retry_after_seconds(err), 20.0))
+                    elif "reasoning_effort" in msg and "reasoning_effort" in kwargs:
+                        kwargs.pop("reasoning_effort", None)
+                    elif json_mode and "response_format" in kwargs:
+                        # Some models reject JSON mode; _parse_json handles raw text
+                        kwargs.pop("response_format", None)
+                    else:
+                        raise
+            if response is None:
+                raise last_err
             content = (response.choices[0].message.content or "").strip()
             if content:
+                LAST_LLM_ERROR = ""
                 return content
             raise RuntimeError("Empty response from Groq")
         except Exception as e:
+            LAST_LLM_ERROR = str(e)[:300]
             err = str(e).lower()
             if "request limit" in err or "429" in err or "rate limit" in err or "tokens" in err:
                 print("⚡️ Groq rate limit reached! Falling back to local engine...")

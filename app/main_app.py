@@ -1642,7 +1642,8 @@ elif page == "dashboard":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "compare":
     from modules.doc_types import (DOC_TYPES, detect_document_type, extract_key_terms,
-                                   favorability_score, compare_documents)
+                                   favorability_score, compare_documents, ai_coverage)
+    from modules import llm_engine as _llm
     from modules.doc_processor import process_contract
     import tempfile, glob
 
@@ -1654,7 +1655,12 @@ elif page == "compare":
     samples = sorted(glob.glob(os.path.join(SAMPLE_DIR, "*.pdf")) + glob.glob(os.path.join(SAMPLE_DIR, "*.docx")))
 
     def _doc_label(path_or_name: str) -> str:
-        return os.path.splitext(os.path.basename(path_or_name))[0].replace("_", " ").replace("-", " ")
+        import re as _re
+        name = os.path.splitext(os.path.basename(path_or_name))[0]
+        name = _re.sub(r"^[A-Z]{2,}\d+[_\- ]+", "", name)          # filing codes like COL00040_
+        name = _re.sub(r"[_\- ]+\d{5,}$", "", name)                # trailing database IDs
+        name = _re.sub(r"^Credit[-_ ]Card[-_ ]Agreement[-_ ]for[-_ ]", "", name, flags=_re.I)
+        return name.replace("_", " ").replace("-", " ").strip()
 
     src_a = src_b = None
     if len(samples) >= 2:
@@ -1724,6 +1730,7 @@ elif page == "compare":
             verdict = compare_documents(name_a, rows_a, name_b, rows_b, dtype, use_llm=use_llm)
             prog.progress(100)
             st.session_state.compare_result = {
+                "llm_error": _llm.LAST_LLM_ERROR if (ai_coverage(rows_a) < 1 or ai_coverage(rows_b) < 1) else "",
                 "type": dtype, "type_mismatch": forced == "auto" and det_a["type"] != det_b["type"],
                 "det_b": det_b["type"], "name_a": name_a, "name_b": name_b,
                 "rows_a": rows_a, "rows_b": rows_b, "verdict": verdict,
@@ -1741,9 +1748,19 @@ elif page == "compare":
         if res["type_mismatch"]:
             st.warning(f"These look like different document types (A: {pack['label']}, "
                        f"B: {DOC_TYPES[res['det_b']]['label']}). Comparing both as a {pack['label']}.")
+        cov_a, cov_b = ai_coverage(res["rows_a"]), ai_coverage(res["rows_b"])
+        if cov_a < 1 or cov_b < 1:
+            st.warning(f"AI extraction covered {cov_a:.0%} of terms for A and {cov_b:.0%} for B. Rows marked "
+                       "'Keyword match only' are raw evidence and are left out of the scores and the verdict."
+                       + (f" Last AI error: {res['llm_error']}" if res.get("llm_error") else ""))
         v = res["verdict"]
         winner = {"A": res["name_a"], "B": res["name_b"]}.get(v["better"])
-        headline = f"🏆 {winner} is better for {pack['perspective']}" if winner else f"🤝 Roughly even for {pack['perspective']}"
+        if v["better"] == "incomplete":
+            headline = "⏳ Not enough terms extracted to pick a winner"
+        elif winner:
+            headline = f"🏆 {winner} is better for {pack['perspective']}"
+        else:
+            headline = f"🤝 Roughly even for {pack['perspective']}"
         st.markdown(f"### {headline}")
         st.markdown(v["summary"])
         if v.get("differences"):
@@ -1755,7 +1772,8 @@ elif page == "compare":
         m2.metric(f"B · favorability", f"{sb}/100" if sb is not None else "n/a")
         m3.metric("Document type", pack["label"])
         st.caption("Favorability = share of the checklist terms that are favorable (1), standard (0.5) or unfavorable (0) "
-                   f"for {pack['perspective']}; terms not found are left out.")
+                   f"for {pack['perspective']}; terms not found or only keyword-matched are left out. "
+                   f"Verdict based on {v.get('compared_terms', '?')} terms extracted for both documents.")
 
         render_comparison(res["name_a"], res["rows_a"], res["name_b"], res["rows_b"])
 
