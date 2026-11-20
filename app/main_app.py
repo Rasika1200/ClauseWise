@@ -38,6 +38,13 @@ st.markdown("""
 #MainMenu {visibility: hidden;}
 header {visibility: hidden;}
 footer {visibility: hidden;}
+/* Keep the "reopen sidebar" arrow visible even though the header is hidden */
+[data-testid="stExpandSidebarButton"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"] {
+    visibility: visible !important;
+    color: #f3f4f6 !important;
+}
 
 /* Base typography to custom modern font */
 html, body, [class*="css"] {
