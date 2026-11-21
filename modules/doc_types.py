@@ -22,17 +22,17 @@ DOC_TYPES: Dict[str, Dict] = {
                      "balance transfer", "cash advance", "billing cycle", "grace period", "penalty apr",
                      "foreign transaction", "card member", "cardmember", "statement balance"],
         "terms": [
-            {"key": "purchase_apr", "label": "Purchase APR", "query": "annual percentage rate APR purchases variable prime rate margin"},
-            {"key": "penalty_apr", "label": "Penalty APR & triggers", "query": "penalty APR late payment returned payment default rate how long"},
-            {"key": "cash_advance", "label": "Cash advance APR & fee", "query": "cash advance APR fee transaction"},
-            {"key": "balance_transfer", "label": "Balance transfer APR & fee", "query": "balance transfer APR fee intro introductory"},
-            {"key": "annual_fee", "label": "Annual fee", "query": "annual fee membership fee"},
-            {"key": "late_fee", "label": "Late payment fee", "query": "late payment fee up to returned payment fee"},
-            {"key": "foreign_fee", "label": "Foreign transaction fee", "query": "foreign transaction fee currency conversion outside united states"},
-            {"key": "grace_period", "label": "Grace period", "query": "grace period interest free days due date pay entire balance"},
-            {"key": "disputes", "label": "Billing dispute & chargeback rights", "query": "billing error dispute rights notify us in writing 60 days unauthorized purchase chargeback"},
-            {"key": "arbitration", "label": "Arbitration & class-action waiver", "query": "arbitration class action waiver jury trial opt out"},
-            {"key": "rate_changes", "label": "Changing terms / rates", "query": "change terms notice 45 days amend agreement rates"},
+            {"key": "purchase_apr", "label": "Purchase APR", "query": "annual percentage rate APR purchases variable prime rate margin", "rubric": "If different APRs apply to different purchases (e.g. store vs other purchases, intro vs regular), list each with what it applies to. Regular APR under 18% favorable, 18-27% standard, above 27% unfavorable."},
+            {"key": "penalty_apr", "label": "Penalty APR & triggers", "query": "penalty APR late payment returned payment default rate how long", "rubric": "No penalty APR = favorable; penalty APR that can apply indefinitely = unfavorable; otherwise standard. Late or returned-payment FEES are not a penalty APR."},
+            {"key": "cash_advance", "label": "Cash advance APR & fee", "query": "cash advance APR fee transaction", "rubric": "Cash advance APRs and fees are almost always high; above 27% APR or fee of 5% or more = unfavorable."},
+            {"key": "balance_transfer", "label": "Balance transfer APR & fee", "query": "balance transfer APR fee intro introductory", "rubric": "0% intro or no fee = favorable; fee of 3-5% = standard; above 5% = unfavorable."},
+            {"key": "annual_fee", "label": "Annual fee", "query": "annual fee membership fee", "rubric": "$0 = favorable; up to $99 = standard; above $99 = unfavorable."},
+            {"key": "late_fee", "label": "Late payment fee", "query": "late payment fee up to returned payment fee", "rubric": "Up to $41 (the common regulatory safe-harbor level) = standard; none = favorable; above $41 = unfavorable."},
+            {"key": "foreign_fee", "label": "Foreign transaction fee", "query": "foreign transaction fee currency conversion outside united states", "rubric": "None = favorable; up to 3% = unfavorable."},
+            {"key": "grace_period", "label": "Grace period", "query": "grace period interest free days due date pay entire balance", "rubric": "21-25 days = standard; more than 25 days = favorable; no grace period = unfavorable."},
+            {"key": "disputes", "label": "Billing dispute & chargeback rights", "query": "billing error dispute rights notify us in writing 60 days unauthorized purchase chargeback", "rubric": "Standard Fair Credit Billing rights (60 days to dispute in writing) = standard; extra protections = favorable; limits beyond the law = unfavorable."},
+            {"key": "arbitration", "label": "Arbitration & class-action waiver", "query": "arbitration arbitrator binding arbitration class action jury trial", "rubric": "Only use text that actually mentions arbitration or a class-action waiver. If the excerpts never mention arbitration, assessment is not_found (no arbitration clause is good for the cardholder; say so in the note). Mandatory arbitration with no opt-out = unfavorable; with an opt-out = standard."},
+            {"key": "rate_changes", "label": "Changing terms / rates", "query": "change terms notice 45 days amend agreement rates", "rubric": "45 days' notice (the legal minimum) = standard; less or unclear = unfavorable."},
         ],
     },
     "loan": {
@@ -231,7 +231,8 @@ def extract_key_terms(chunk_texts: List[str], doc_type: str, use_llm: bool = Tru
         blocks = []
         for t in batch:
             excerpt = "\n...\n".join(chunk_texts[i][:550] for i in hits.get(t["key"], [])) or "(no matching text)"
-            blocks.append(f"### {t['key']} — {t['label']}\n{excerpt}")
+            rubric = f"\nHow to assess: {t['rubric']}" if t.get("rubric") else ""
+            blocks.append(f"### {t['key']} — {t['label']}{rubric}\n{excerpt}")
         prompt = f"""You are reviewing a {pack['label']} from the perspective of {pack['perspective']}.
 For each term below, read ONLY its excerpts and extract what the document says.
 
@@ -243,6 +244,9 @@ Rules:
 - note: one short sentence explaining the assessment.
 - quote: a short exact phrase (under 25 words) copied from the excerpt that supports the value; "" if not_found.
 Never invent numbers that are not in the excerpts.
+- If the excerpts don't specifically address the term, use "not_found". Never reuse text about a different topic.
+- APRs are annual rates. Ignore daily periodic rates (tiny percentages like 0.07805%).
+- Follow each term's "How to assess" guidance when it is given, so the same value always gets the same assessment.
 
 Respond ONLY with JSON:
 {{"terms": [{{"key": "...", "value": "...", "assessment": "...", "note": "...", "quote": "..."}}]}}"""
@@ -259,6 +263,10 @@ Respond ONLY with JSON:
         r = by_key.get(row["key"])
         if r:
             a = str(r.get("assessment", "")).strip().lower().replace(" ", "_")
+            if a == "not_found":
+                merged.append({**row, "value": "Not mentioned in this document", "assessment": "not_found",
+                               "note": str(r.get("note") or "")[:300], "quote": "", "method": "ai"})
+                continue
             merged.append({**row,
                            "value": str(r.get("value") or row["value"])[:200],
                            "assessment": a if a in ASSESSMENTS else "standard",
@@ -286,10 +294,28 @@ def favorability_score(rows: List[Dict]) -> Optional[int]:
 
 
 # ── Comparison ────────────────────────────────────────────────────────────────
+def _norm_value(v: str) -> str:
+    v = (v or "").lower().replace("up to", "").replace("max", "").replace("maximum", "")
+    return re.sub(r"[^a-z0-9.%$]+", "", v)
+
+
+def harmonize_assessments(rows_a: List[Dict], rows_b: List[Dict]) -> None:
+    """Same value in both documents must get the same assessment (fixes model inconsistency). In place."""
+    for ra, rb in zip(rows_a, rows_b):
+        if (ra.get("method", "ai") == "ai" and rb.get("method", "ai") == "ai"
+                and ra["assessment"] != rb["assessment"]
+                and "not_found" not in (ra["assessment"], rb["assessment"])
+                and _norm_value(ra["value"]) and _norm_value(ra["value"]) == _norm_value(rb["value"])):
+            ra["assessment"] = rb["assessment"] = "standard"
+            for r in (ra, rb):
+                r["note"] = (r.get("note", "") + " (Same as the other document; rated consistently.)").strip()
+
+
 def compare_documents(name_a: str, rows_a: List[Dict], name_b: str, rows_b: List[Dict],
                       doc_type: str, use_llm: bool = True) -> Dict:
     """Return {better: 'A'|'B'|'similar'|'incomplete', summary, differences: [str], compared_terms}."""
     pack = DOC_TYPES.get(doc_type, DOC_TYPES["commercial"])
+    harmonize_assessments(rows_a, rows_b)
     # Only compare terms the AI extracted for BOTH documents; keyword fallbacks are evidence, not verdicts
     pairs = [(ra, rb) for ra, rb in zip(rows_a, rows_b)
              if ra.get("method", "ai") == "ai" and rb.get("method", "ai") == "ai"]
@@ -305,6 +331,7 @@ def compare_documents(name_a: str, rows_a: List[Dict], name_b: str, rows_b: List
         better = "similar"
     else:
         better = "A" if sa > sb else "B"
+    score_line = f"Favorability scores: A = {sa}/100, B = {sb}/100."
     fallback = {
         "better": better,
         "summary": (f"{name_a if better == 'A' else name_b} scores better for {pack['perspective']}."
@@ -322,13 +349,21 @@ A = {name_a}
 B = {name_b}
 {table}
 
-Which is better for {pack['perspective']}? Respond ONLY with JSON:
+{score_line}
+Which is better for {pack['perspective']}? Weigh what costs a typical person most (e.g. the regular purchase APR matters more than a store-only rate).
+Be precise: if a rate only applies in some cases, say so. Respond ONLY with JSON:
 {{"better": "A" or "B" or "similar", "summary": "<2 sentences>", "differences": ["<up to 5 short bullets on the differences that matter most>"]}}"""
     try:
         from modules.llm_engine import call_llm, _parse_json
         data = _parse_json(call_llm(prompt, json_mode=True))
         b = str(data.get("better", "")).strip().upper()
-        return {"better": b if b in ("A", "B") else "similar",
+        b = b if b in ("A", "B") else "similar"
+        # The headline must agree with the scores: a clear score gap decides; on a tie the model may only give an edge
+        if better in ("A", "B"):
+            b = better
+        elif b in ("A", "B"):
+            b = "edge_" + b
+        return {"better": b,
                 "summary": str(data.get("summary") or fallback["summary"]),
                 "differences": [str(d) for d in (data.get("differences") or fallback["differences"])][:5],
                 "method": "llm", "compared_terms": len(pairs)}

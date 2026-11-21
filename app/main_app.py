@@ -1762,7 +1762,10 @@ elif page == "compare":
                        + (f" Last AI error: {res['llm_error']}" if res.get("llm_error") else ""))
         v = res["verdict"]
         winner = {"A": res["name_a"], "B": res["name_b"]}.get(v["better"])
-        if v["better"] == "incomplete":
+        edge = {"edge_A": res["name_a"], "edge_B": res["name_b"]}.get(v["better"])
+        if edge:
+            headline = f"⚖️ Close call: slight edge to {edge} for {pack['perspective']}"
+        elif v["better"] == "incomplete":
             headline = "⏳ Not enough terms extracted to pick a winner"
         elif winner:
             headline = f"🏆 {winner} is better for {pack['perspective']}"
