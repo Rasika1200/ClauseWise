@@ -1,85 +1,121 @@
-# ClauseWise: AI-Powered Contract Review & Risk Analysis
+# ClauseWise
 
-## 📌 Project Overview
-**ClauseWise Copilot** is a high-performance, full-stack enterprise application designed to ingest, analyze, and interrogate complex legal contracts instantly. Built for the DATS 6501 Capstone project at George Washington University, the platform replaces hours of manual legal review with a robust Retrieval-Augmented Generation (RAG) pipeline and a human-in-the-loop validation workflow.
+**Upload a contract, get a risk review, and ask it questions in plain English.**
+A retrieval-augmented (RAG) contract analysis app, evaluated on the CUAD legal benchmark.
 
-## 📁 Project Structure
-```text
-DATS6501_Capstone_Project/
-├── README.md               # Main project documentation
-├── requirements.txt        # Python dependencies
-├── .env.example            # Environment template
-├── .gitignore              # Git ignore rules
-├── LICENSE                 # MIT License
-├── app/                    # Streamlit Dashboard UI
-├── api/                    # FastAPI Extension Backend
-├── modules/                # Core AI & RAG Logic
-├── evaluation/             # Performance Metrics & CUAD Benchmarks
-├── notebooks/              # Evaluation & Demo Notebooks
-├── extension/              # Chrome Sidebar Source Code
-├── data/                   # Persistence & Demo Contracts
-├── screenshots/            # UI/UX Previews
-└── docs/                   # Technical Architecture Documentation
-```
+[**▶ Try the live demo**](https://clausewise-rasika.streamlit.app) · [Evaluation results](evaluation/EVALUATION_RESULTS.md) · [Architecture](docs/ARCHITECTURE.md)
 
-## 🛠 Technical Architecture
-ClauseWise utilizes a decoupled architecture to support both a high-end analytical dashboard and a lightweight browser extension. For a deep dive, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+[![Tests](https://github.com/Rasika1200/ClauseWise/actions/workflows/tests.yml/badge.svg)](https://github.com/Rasika1200/ClauseWise/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
+> The demo runs on Streamlit Community Cloud's free tier. If it has been idle it shows a "wake up" screen; click it and give it a minute.
+> Click **✨ Load Demo Contract** to explore a real AMD–OpenAI agreement without uploading anything.
+
+![Contract review: overall risk, suggested routing, plain-English summary and key-terms checklist](docs/screenshots/review.png)
+
+**Stack:** Python · Streamlit · Groq (`gpt-oss-20b`, Whisper) · ChromaDB · BM25 · sentence-transformers (MiniLM, cross-encoder) · FastAPI · SQLite · Plotly
+
+---
+
+## What it does
+
+- **Contract review.** Extracts the key clauses with verbatim quotes, rates each one's risk, writes a plain-English summary and suggests which team should review it (Legal, Finance…).
+- **Key-terms checklist by document type.** Detects the type (NDA, employment, lease, loan, credit card or commercial contract) and fills a checklist for that type, with a favorability score and the quoted evidence behind each term.
+- **Q&A with citations.** Answers questions using only the contract text, shows the source passages, and says "the document does not specify" rather than guessing.
+- **Voice questions.** Record a question in the browser; Groq-hosted Whisper transcribes it.
+- **Human-in-the-loop validation.** Accept, edit or reject each extracted clause; decisions are logged to SQLite as an audit trail.
+- **Risk dashboard and reports.** Risk meter and clause-level breakdown, a downloadable Word report, and print-to-PDF.
+- **Compare documents.** Put two agreements of the same kind side by side (two leases, two credit cards…) and see which is better on each term, and why.
+- **Chrome extension** *(local only)*. A sidebar that sends the current web page to a FastAPI backend for analysis.
+
+| Q&A with source matching | Risk dashboard |
+| :---: | :---: |
+| ![Q&A answer with source match and legal citations](docs/screenshots/qa.png) | ![Risk dashboard with overall profile, score and risk meter](docs/screenshots/dashboard.png) |
+
+## How it works
 
 ```mermaid
-graph TD
-    A[PDF/DOCX/Webpage] --> B(Document Processor)
-    B --> C{Chunking & Embedding}
-    C --> D[(ChromaDB Vector Store)]
-    D --> E[RAG Pipeline]
-    E --> F[Groq gpt-oss-20b]
-    F --> G[Streamlit Dashboard]
-    F --> H[Chrome Sidebar Extension]
-    G --> I[Human-in-the-Loop Validation]
-    I --> J[(SQLite Audit Log)]
+graph LR
+    A[PDF / DOCX / web page] --> B[Semantic chunking]
+    B --> C[Clause matcher<br/>MiniLM similarity]
+    B --> D[(ChromaDB + BM25)]
+    Q[Question] --> E[Hybrid retrieval<br/>RRF fusion]
+    D --> E
+    E --> F[Cross-encoder re-rank]
+    F --> G[Groq gpt-oss-20b]
+    C --> G
+    G --> H[Streamlit UI / Chrome extension]
+    H --> I[(SQLite audit log)]
 ```
 
-## 🚀 Key Features
-1. **Semantic RAG Engine:** Uses `all-MiniLM-L6-v2` local embeddings and ChromaDB to retrieve contract context with high precision.
-2. **Dynamic Risk Dashboarding:** Heuristically scores liability vectors and visualizes contract "health" via Plotly.
-3. **Chrome Sidebar Extension:** A FastAPI-backed extension for analyzing contracts directly from the browser.
-4. **Hybrid System Resiliency:** Automated fallback from Groq Cloud to local **Ollama (Llama 3.2)** for 100% uptime.
-5. **Human-In-The-Loop (HITL):** Legal operators validate AI findings, creating a verifiable audit trail in SQLite.
-6. **Voice-Enabled Interface:** Integrated STT/TTS using **OpenAI Whisper** for natural language interrogation.
+1. **Ingest:** PyMuPDF / python-docx extract text; sentences are embedded and split where topic similarity drops (semantic chunking).
+2. **Classify:** each chunk is matched to a 13-type clause taxonomy by embedding similarity, giving clause labels and risk weights without an LLM call.
+3. **Retrieve:** questions run against dense (MiniLM) and sparse (BM25) search, fused with Reciprocal Rank Fusion, then re-ranked by a cross-encoder. Optional HyDE and query expansion.
+4. **Generate:** Groq `gpt-oss-20b` (temperature 0) produces the review and answers from the retrieved context only, with JSON-structured output validated by Pydantic.
+5. **Fallbacks:** if Groq is unavailable, a local Ollama model is tried, then a deterministic keyword engine, so the app degrades instead of failing.
 
-## 📊 Performance & Evaluation
-Measured on the **CUAD v1** benchmark (510 lawyer-annotated commercial contracts) with `openai/gpt-oss-20b` on Groq, November 2026:
+More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Evaluation
+
+Measured on **CUAD v1** (510 commercial contracts annotated by lawyers) with `gpt-oss-20b`, November 2026, using the app's own code paths:
 
 | Metric | Result | Sample |
 | :--- | :--- | :--- |
-| **Clause-type detection F1** (micro, 6 CUAD-scorable types) | **0.71** (P 0.69 / R 0.74) | 510 contracts |
-| **Extracted clause quotes found verbatim in the contract** | **82%** (4% invented) | 122 clauses |
-| **Q&A accuracy on "does the contract cover X?"** | **85%** | 60 questions |
-| **Q&A false "clause exists" claims** | **13%** | 30 questions |
-| **Retrieval: gold passage in top-8 context** | **93%** | 30 questions |
-| **Median Groq latency** | **~1.2 s** | |
+| Clause-type detection F1 (micro, 6 CUAD-scorable types) | **0.71** (P 0.69 / R 0.74) | 510 contracts |
+| Extracted clause quotes found verbatim in the contract | **82%** (4% invented) | 122 clauses |
+| Q&A accuracy on "does the contract cover X?" | **85%** | 60 questions |
+| Q&A false "clause exists" claims | **13%** | 30 questions |
+| Retrieval: gold passage in top-8 context | **93%** | 30 questions |
+| Median Groq latency | **~1.2 s** | |
 
-### How I Evaluated
-[`evaluation/run_eval.py`](evaluation/run_eval.py) runs the same code paths the app uses against CUAD's labels:
-* **Clause detection:** the embedding-based clause matcher on every chunk of every contract, scored per clause type.
-* **LLM extraction:** whether each clause the model quotes actually appears in the contract.
-* **RAG Q&A:** a balanced set of questions about clauses CUAD marks present or absent, checking retrieval and whether the answer claims clauses that aren't there.
+**What the evaluation found**
+- Governing law (F1 0.94), liability caps (0.79) and IP (0.77) are detected reliably; non-compete (0.44) is the weakest type.
+- Retrieval finds the right passage 93% of the time; most Q&A misses happen *after* retrieval, when the strict "don't guess" prompt makes the model too cautious.
+- All invented quotes came from one very long contract whose first pages are a table of contents, which shows that the extraction step needs better chunk selection on long documents.
 
-Full results, per-type breakdowns, failure analysis and limitations are in [EVALUATION_RESULTS.md](evaluation/EVALUATION_RESULTS.md). Human-in-the-loop decisions are logged to SQLite, but no user study has been run yet.
+Per-type results, failure analysis, limitations and reproduction steps: [EVALUATION_RESULTS.md](evaluation/EVALUATION_RESULTS.md). Reproduce with `python evaluation/run_eval.py`.
 
-## ⚙️ Setup & Installation
+## Run it locally
 
-### 1. Clone & Environment
 ```bash
-git clone https://github.com/Rasika1200/DATS6501_Capstone_Project.git
-cd DATS6501_Capstone_Project
+git clone https://github.com/Rasika1200/ClauseWise.git
+cd ClauseWise
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env # Add your GROQ_API_KEY
+cp .env.example .env          # then add your free Groq key: https://console.groq.com/keys
+streamlit run app/main_app.py
 ```
 
-### 2. Run Commands
-**Terminal 1 (Dashboard):** `streamlit run app/main_app.py`  
-**Terminal 2 (Extension API):** `uvicorn api.main:app --reload`
+- **macOS:** neural models (MiniLM embeddings, cross-encoder) are off by default because of PyTorch thread deadlocks; run with `CLAUSEWISE_NEURAL=1 streamlit run app/main_app.py` to enable them. Without them the app uses TF-IDF embeddings.
+- **Chrome extension:** start the API with `uvicorn api.main:app --reload`, then load `extension/` as an unpacked extension in `chrome://extensions`.
+- **Tests:** `pytest`
+
+## Project structure
+
+```text
+app/            Streamlit app (main_app.py) + slim requirements for Streamlit Cloud
+modules/        Pipeline: doc_processor, embedder, clause_matcher, rag_pipeline,
+                llm_engine, doc_types, db_manager, voice_handler, telemetry
+api/            FastAPI backend for the Chrome extension
+extension/      Chrome sidebar extension
+evaluation/     CUAD evaluation script, metrics and results
+tests/          pytest unit tests (run in GitHub Actions)
+notebooks/      Exploration and demo notebooks
+data/           Demo contracts
+docs/           Architecture notes and screenshots
+```
+
+## What's next
+
+- Select the chunks sent for extraction by clause relevance instead of taking the first 8, to stop the invented-clause failure on long contracts.
+- Improve the non-compete and assignment descriptions in the clause matcher (lowest recall in the evaluation).
+- Loosen the Q&A prompt where the right passage was retrieved but the model still declined to answer.
+- Run a small user study to measure the human-in-the-loop acceptance rate.
+
+> **Disclaimer:** ClauseWise is a portfolio project and a technical analysis tool, not a lawyer. Its output is not legal advice.
 
 ---
-**Author:** Rasika Shrikant Nilatkar  
-**Course:** DATS 6501 Capstone | The George Washington University
+
+Built by **Rasika Shrikant Nilatkar** as the DATS 6501 Capstone at The George Washington University. MIT License.
