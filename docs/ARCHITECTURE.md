@@ -15,7 +15,7 @@ ClauseWise is a multi-tier application designed for high-speed legal document an
 - **RAG Pipeline:** Performs semantic search, context assembly, and metadata-aware retrieval.
 
 ### 2.3 AI Engine (`modules/llm_engine.py`)
-- **Primary:** Groq Cloud (Llama 3.1 8B) for sub-second cloud inference.
+- **Primary:** Groq Cloud (`openai/gpt-oss-20b`, low reasoning effort), ~1.2 s median latency.
 - **Resiliency:** Automated fallback to local Ollama (Llama 3.2 3B) during network failure or rate-limiting.
 - **Guardrails:** Deterministic prompting (Temperature = 0.0) with strict source-grounding instructions.
 

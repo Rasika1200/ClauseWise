@@ -25,3 +25,7 @@ db/
 
 # Logs
 *.log
+
+# CUAD benchmark data (downloaded by evaluation/run_eval.py instructions)
+evaluation/cuad/
+evaluation/eval_runs/

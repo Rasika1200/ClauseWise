@@ -31,7 +31,7 @@ graph TD
     B --> C{Chunking & Embedding}
     C --> D[(ChromaDB Vector Store)]
     D --> E[RAG Pipeline]
-    E --> F[Groq Llama 3.1 8B]
+    E --> F[Groq gpt-oss-20b]
     F --> G[Streamlit Dashboard]
     F --> H[Chrome Sidebar Extension]
     G --> I[Human-in-the-Loop Validation]
@@ -47,22 +47,24 @@ graph TD
 6. **Voice-Enabled Interface:** Integrated STT/TTS using **OpenAI Whisper** for natural language interrogation.
 
 ## 📊 Performance & Evaluation
-| Metric | Score |
-| :--- | :--- |
-| **Clause Extraction F1-Score** | **92.4%** |
-| **RAG Hallucination Rate** | **< 3.8%** |
-| **Human Agreement Rate** | **87.0%** |
-| **Avg. Inference Latency** | **~850ms** |
+Measured on the **CUAD v1** benchmark (510 lawyer-annotated commercial contracts) with `openai/gpt-oss-20b` on Groq, November 2026:
+
+| Metric | Result | Sample |
+| :--- | :--- | :--- |
+| **Clause-type detection F1** (micro, 6 CUAD-scorable types) | **0.71** (P 0.69 / R 0.74) | 510 contracts |
+| **Extracted clause quotes found verbatim in the contract** | **82%** (4% invented) | 122 clauses |
+| **Q&A accuracy on "does the contract cover X?"** | **85%** | 60 questions |
+| **Q&A false "clause exists" claims** | **13%** | 30 questions |
+| **Retrieval: gold passage in top-8 context** | **93%** | 30 questions |
+| **Median Groq latency** | **~1.2 s** | |
 
 ### How I Evaluated
-To demonstrate empirical rigor and system reliability, we evaluated the ClauseWise pipeline against the **Contract Understanding Atticus Dataset (CUAD)** benchmark, a gold-standard dataset for legal contract understanding. 
+[`evaluation/run_eval.py`](evaluation/run_eval.py) runs the same code paths the app uses against CUAD's labels:
+* **Clause detection:** the embedding-based clause matcher on every chunk of every contract, scored per clause type.
+* **LLM extraction:** whether each clause the model quotes actually appears in the contract.
+* **RAG Q&A:** a balanced set of questions about clauses CUAD marks present or absent, checking retrieval and whether the answer claims clauses that aren't there.
 
-My evaluations measure:
-* **Extraction Precision & Recall** using CUAD data.
-* **RAG Hallucination Rates** comparing different LLM engines under strict fallbacks.
-* **Human-in-the-Loop Agreement** tracking analyst acceptance rates.
-
-Detailed scripts, benchmark targets, and performance logs are located in the [evaluation/](evaluation/) folder.
+Full results, per-type breakdowns, failure analysis and limitations are in [EVALUATION_RESULTS.md](evaluation/EVALUATION_RESULTS.md). Human-in-the-loop decisions are logged to SQLite, but no user study has been run yet.
 
 ## ⚙️ Setup & Installation
 

@@ -190,10 +190,16 @@ def index_chunks(chunks, topic_labels: Optional[List[Dict]] = None, clear_first:
 
         if topic_labels and i < len(topic_labels):
             label = topic_labels[i]
+            # Accept both label shapes: topic_modeler ("clause_type"/"confidence") and
+            # clause_matcher.match_chunks ("matched_clause"/"match_score"), which the app passes.
+            clause_type = label.get("clause_type") or label.get("matched_clause") or "other"
+            confidence = label.get("confidence")
+            if confidence is None:
+                confidence = label.get("match_score", 0.0)
             meta.update({
-                "clause_type": label.get("clause_type") or "other",
+                "clause_type": clause_type,
                 "risk_level": label.get("risk_level") or "low",
-                "confidence": str(label.get("confidence") if label.get("confidence") is not None else 0.0),
+                "confidence": str(confidence),
                 "summary": label.get("summary") or "",
             })
 

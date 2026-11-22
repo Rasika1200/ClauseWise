@@ -1,0 +1,164 @@
+{
+  "meta": {
+    "dataset": "CUAD v1 (510 contracts), github.com/TheAtticusProject/cuad",
+    "seed": 42,
+    "llm": "openai/gpt-oss-20b",
+    "neural_models": "1",
+    "date": "2026-11-21"
+  },
+  "detect": {
+    "n_contracts": 510,
+    "embedding_backend": "MiniLM-L6-v2 (HuggingFace)",
+    "match_threshold": 0.25,
+    "micro": {
+      "precision": 0.6915,
+      "recall": 0.7369,
+      "f1": 0.7135,
+      "tp": 1179,
+      "fp": 526,
+      "fn": 421
+    },
+    "macro": {
+      "precision": 0.679,
+      "recall": 0.7364,
+      "f1": 0.6502
+    },
+    "per_type": {
+      "governing law": {
+        "precision": 0.8841,
+        "recall": 0.9954,
+        "f1": 0.9365,
+        "tp": 435,
+        "fp": 57,
+        "fn": 2
+      },
+      "assignment": {
+        "precision": 0.9364,
+        "recall": 0.4332,
+        "f1": 0.5923,
+        "tp": 162,
+        "fp": 11,
+        "fn": 212
+      },
+      "limitation of liability": {
+        "precision": 0.739,
+        "recall": 0.8545,
+        "f1": 0.7926,
+        "tp": 235,
+        "fp": 83,
+        "fn": 40
+      },
+      "non-compete / non-solicitation": {
+        "precision": 0.4776,
+        "recall": 0.4129,
+        "f1": 0.4429,
+        "tp": 64,
+        "fp": 70,
+        "fn": 91
+      },
+      "intellectual property": {
+        "precision": 0.8132,
+        "recall": 0.7359,
+        "f1": 0.7726,
+        "tp": 209,
+        "fp": 48,
+        "fn": 75
+      },
+      "warranty": {
+        "precision": 0.2236,
+        "recall": 0.9867,
+        "f1": 0.3645,
+        "tp": 74,
+        "fp": 257,
+        "fn": 1
+      }
+    },
+    "gold_prevalence": {
+      "governing law": 437,
+      "assignment": 374,
+      "limitation of liability": 275,
+      "non-compete / non-solicitation": 155,
+      "intellectual property": 284,
+      "warranty": 75
+    }
+  },
+  "extract": {
+    "n_contracts": 25,
+    "n_clauses": 122,
+    "quote_exact_rate": 0.8197,
+    "quote_near_exact_rate_90": 0.8443,
+    "type_precision_on_cuad_judgeable": 0.8571,
+    "n_type_judgeable": 14,
+    "n_type_not_judgeable": 108,
+    "latency_s_median": 1.26,
+    "latency_s_p90": 1.51
+  },
+  "qa": {
+    "n_questions": 60,
+    "n_clause_present": 30,
+    "n_clause_absent": 30,
+    "accuracy": 0.85,
+    "false_claim_rate_on_absent": 0.1333,
+    "miss_rate_on_present": 0.1667,
+    "gold_span_retrieved_rate": 0.9333,
+    "latency_s_median": 1.1,
+    "per_category": {
+      "Exclusivity": {
+        "n": 6,
+        "correct": 4
+      },
+      "Anti-Assignment": {
+        "n": 8,
+        "correct": 8
+      },
+      "Insurance": {
+        "n": 6,
+        "correct": 6
+      },
+      "Governing Law": {
+        "n": 9,
+        "correct": 9
+      },
+      "Cap On Liability": {
+        "n": 6,
+        "correct": 4
+      },
+      "Termination For Convenience": {
+        "n": 8,
+        "correct": 6
+      },
+      "Liquidated Damages": {
+        "n": 3,
+        "correct": 2
+      },
+      "Non-Compete": {
+        "n": 6,
+        "correct": 5
+      },
+      "Change Of Control": {
+        "n": 4,
+        "correct": 4
+      },
+      "Audit Rights": {
+        "n": 4,
+        "correct": 3
+      }
+    }
+  },
+  "meta_by_part": {
+    "extract": {
+      "dataset": "CUAD v1 (510 contracts), github.com/TheAtticusProject/cuad",
+      "seed": 42,
+      "llm": "openai/gpt-oss-20b",
+      "neural_models": "1",
+      "date": "2026-11-21"
+    },
+    "qa": {
+      "dataset": "CUAD v1 (510 contracts), github.com/TheAtticusProject/cuad",
+      "seed": 42,
+      "llm": "openai/gpt-oss-20b",
+      "neural_models": "1",
+      "date": "2026-11-21"
+    }
+  }
+}
