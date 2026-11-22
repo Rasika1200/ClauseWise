@@ -36,7 +36,7 @@ A retrieval-augmented (RAG) contract analysis app, evaluated on the CUAD legal b
 ## How it works
 
 ```mermaid
-graph LR
+graph TD
     A[PDF / DOCX / web page] --> B[Semantic chunking]
     B --> C[Clause matcher<br/>MiniLM similarity]
     B --> D[(ChromaDB + BM25)]
