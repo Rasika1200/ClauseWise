@@ -118,4 +118,4 @@ docs/           Architecture notes and screenshots
 
 ---
 
-Built by **Rasika Shrikant Nilatkar** as the DATS 6501 Capstone at The George Washington University. MIT License.
+Built by **Rasika Shrikant Nilatkar** as the DATS 6501 Capstone at The George Washington University.
